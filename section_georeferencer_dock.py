@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 
 from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtGui import QColor, QCursor
 from qgis.PyQt.QtWidgets import (
     QAbstractItemView,
     QDockWidget,
@@ -30,7 +31,7 @@ from qgis.core import (
     QgsUnitTypes,
     QgsWkbTypes,
 )
-from qgis.gui import QgsMapToolEmitPoint
+from qgis.gui import QgsMapTool, QgsRubberBand, QgsVertexMarker
 
 from . import config_io
 from .layer_projector import project_point_layer, project_vector_layer_vertices
@@ -331,9 +332,13 @@ class SectionGeoreferencerDock(QDockWidget):
             self._warn("QGIS map canvas is not available.")
             return
         self.previous_map_tool = canvas.mapTool()
-        self.section_line_tool = SectionLineMapTool(canvas, self._finish_drawn_section_line)
+        self.section_line_tool = SectionLineMapTool(
+            canvas,
+            self._finish_drawn_section_line,
+            self._cancel_drawn_section_line,
+        )
         canvas.setMapTool(self.section_line_tool)
-        self._info("Click P0 then P1 on the map canvas to define the section line.")
+        self._info("Click P0 on the map, then move the cursor and click P1. Snapping follows QGIS snapping settings.")
 
     def _finish_drawn_section_line(self, p0, p1):
         try:
@@ -351,6 +356,17 @@ class SectionGeoreferencerDock(QDockWidget):
         self.section_line_tool = None
         self.previous_map_tool = None
         self._info("Section line set from map XY clicks.")
+
+    def _cancel_drawn_section_line(self):
+        try:
+            canvas = self.iface.mapCanvas()
+            if self.previous_map_tool is not None:
+                canvas.setMapTool(self.previous_map_tool)
+        except Exception:
+            pass
+        self.section_line_tool = None
+        self.previous_map_tool = None
+        self._info("Section line drawing canceled.")
 
     def _use_manual_section(self):
         try:
@@ -1099,22 +1115,127 @@ def _float_or_default(text, default):
         return default
 
 
-class SectionLineMapTool(QgsMapToolEmitPoint):
-    """Two-click map tool for defining the section line in map XY space."""
+class SectionLineMapTool(QgsMapTool):
+    """Two-click map tool with snapping, crosshair marker, and rubber band."""
 
-    def __init__(self, canvas, finished_callback):
+    def __init__(self, canvas, finished_callback, canceled_callback):
         super().__init__(canvas)
         self.canvas = canvas
         self.finished_callback = finished_callback
+        self.canceled_callback = canceled_callback
         self.points = []
-        self.canvasClicked.connect(self._on_canvas_clicked)
+        self.setCursor(QCursor(Qt.CrossCursor))
 
-    def _on_canvas_clicked(self, point, button):
-        if button != Qt.LeftButton:
+        self.preview_line = QgsRubberBand(canvas, QgsWkbTypes.LineGeometry)
+        self.preview_line.setColor(QColor(30, 120, 255, 180))
+        self.preview_line.setWidth(2)
+        try:
+            self.preview_line.setLineStyle(Qt.DashLine)
+        except Exception:
+            pass
+
+        self.fixed_line = QgsRubberBand(canvas, QgsWkbTypes.LineGeometry)
+        self.fixed_line.setColor(QColor(30, 120, 255, 220))
+        self.fixed_line.setWidth(2)
+
+        self.cursor_marker = QgsVertexMarker(canvas)
+        self.cursor_marker.setIconType(QgsVertexMarker.ICON_CROSS)
+        self.cursor_marker.setIconSize(14)
+        self.cursor_marker.setPenWidth(2)
+        self.cursor_marker.setColor(QColor(120, 120, 120))
+
+        self.first_marker = QgsVertexMarker(canvas)
+        self.first_marker.setIconType(QgsVertexMarker.ICON_X)
+        self.first_marker.setIconSize(14)
+        self.first_marker.setPenWidth(2)
+        self.first_marker.setColor(QColor(30, 120, 255))
+        self.first_marker.hide()
+
+    def canvasMoveEvent(self, event):
+        point, snapped = self._event_point(event)
+        self._update_cursor_marker(point, snapped)
+        if len(self.points) == 1:
+            self._update_preview_line(self.points[0], point)
+
+    def canvasReleaseEvent(self, event):
+        if event.button() == Qt.RightButton:
+            self.cancel()
             return
+        if event.button() != Qt.LeftButton:
+            return
+        point, snapped = self._event_point(event)
         self.points.append(point)
-        if len(self.points) >= 2:
-            self.finished_callback(self.points[0], self.points[1])
+        if len(self.points) == 1:
+            self.first_marker.setCenter(point)
+            self.first_marker.show()
+            self._update_cursor_marker(point, snapped)
+            return
+        self._update_fixed_line(self.points[0], self.points[1])
+        self.cleanup()
+        self.finished_callback(self.points[0], self.points[1])
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self.cancel()
+
+    def deactivate(self):
+        self.cleanup()
+        super().deactivate()
+
+    def cancel(self):
+        self.cleanup()
+        self.canceled_callback()
+
+    def cleanup(self):
+        for item in (
+            self.preview_line,
+            self.fixed_line,
+            self.cursor_marker,
+            self.first_marker,
+        ):
+            try:
+                self.canvas.scene().removeItem(item)
+            except Exception:
+                pass
+        try:
+            self.canvas.refresh()
+        except Exception:
+            pass
+
+    def _event_point(self, event):
+        snapped = False
+        try:
+            if event.isSnapped():
+                return event.snapPoint(), True
+        except Exception:
+            pass
+        try:
+            match = self.canvas.snappingUtils().snapToMap(event.pos())
+            if match.isValid():
+                return match.point(), True
+        except Exception:
+            pass
+        try:
+            return event.mapPoint(), snapped
+        except Exception:
+            return self.toMapCoordinates(event.pos()), snapped
+
+    def _update_cursor_marker(self, point, snapped):
+        self.cursor_marker.setCenter(point)
+        if snapped:
+            self.cursor_marker.setColor(QColor(220, 60, 30))
+        else:
+            self.cursor_marker.setColor(QColor(120, 120, 120))
+
+    def _update_preview_line(self, p0, p1):
+        self.preview_line.reset(QgsWkbTypes.LineGeometry)
+        self.preview_line.addPoint(p0, False)
+        self.preview_line.addPoint(p1, True)
+
+    def _update_fixed_line(self, p0, p1):
+        self.fixed_line.reset(QgsWkbTypes.LineGeometry)
+        self.fixed_line.addPoint(p0, False)
+        self.fixed_line.addPoint(p1, True)
 
 
 def _empty_gps_summary():

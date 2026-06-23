@@ -58,7 +58,9 @@ The intended handoff is:
 2. Load the PLATEAU layer into QGIS with normal QGIS tools.
 3. Select the relevant PLATEAU building feature in QGIS.
 4. Define a section line in the QGIS XY map canvas by clicking two points, or
-   use manual/selected-line input.
+   use manual/selected-line input. The map drawing tool shows a crosshair
+   marker, previews a dashed line from P0 to the cursor, and follows QGIS
+   snapping settings when snapping is enabled.
 5. Load the selected PLATEAU building as the reference
    section in the plugin.
 6. Load the scanned CAD section drawing as the section background image.
