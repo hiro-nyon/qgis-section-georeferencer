@@ -55,16 +55,19 @@ The plugin adds a toolbar/menu action named **Section Georeferencer**.
 The intended handoff is:
 
 1. In QGIS, prepare the project CRS, for example EPSG:6697.
-2. Load the scanned CAD section drawing as the section background image.
-3. Define a section line in the QGIS project CRS.
-4. Select the relevant PLATEAU building feature and load it as the reference
+2. Load the PLATEAU layer into QGIS with normal QGIS tools.
+3. Select the relevant PLATEAU building feature in QGIS.
+4. Define a section line in the QGIS XY map canvas by clicking two points, or
+   use manual/selected-line input.
+5. Load the selected PLATEAU building as the reference
    section in the plugin.
-5. Use GCPs to fit the CAD image pixel space to PLATEAU-derived section
+6. Load the scanned CAD section drawing as the section background image.
+7. Use GCPs to fit the CAD image pixel space to PLATEAU-derived section
    coordinates `(s, z)`: click the CAD image for `(u, v)` and the PLATEAU
    reference view for `(s, z)`.
-6. Project PLATEAU/CAD and GPS layers.
-7. Export **Section Analysis Package**.
-8. In any normal Python environment, use the exported background image plus
+8. Project PLATEAU/CAD and GPS layers.
+9. Export **Section Analysis Package**.
+10. In any normal Python environment, use the exported background image plus
    `gps_projected.csv`, `plateau_projected.geojson`, and `section_config.json`
    to redraw or statistically validate the overlay.
 

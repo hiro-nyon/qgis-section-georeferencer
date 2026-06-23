@@ -30,6 +30,7 @@ from qgis.core import (
     QgsUnitTypes,
     QgsWkbTypes,
 )
+from qgis.gui import QgsMapToolEmitPoint
 
 from . import config_io
 from .layer_projector import project_point_layer, project_vector_layer_vertices
@@ -65,6 +66,8 @@ class SectionGeoreferencerDock(QDockWidget):
         self.projection_warnings = []
         self.reference_records = []
         self.reference_segments = []
+        self.section_line_tool = None
+        self.previous_map_tool = None
         self._build_ui()
         self._update_crs_labels()
         self._update_section_labels()
@@ -81,6 +84,9 @@ class SectionGeoreferencerDock(QDockWidget):
 
         self.status_label = QLabel("Ready")
         self.status_label.setWordWrap(True)
+        self.status_label.setStyleSheet(
+            "padding: 4px 8px; border-left: 4px solid transparent;"
+        )
         root_layout.addWidget(self.status_label)
 
         self.canvas = SectionCanvas()
@@ -152,12 +158,16 @@ class SectionGeoreferencerDock(QDockWidget):
         layout.addLayout(form)
 
         button_row = QHBoxLayout()
+        draw_button = QPushButton("Draw Line on Map (XY)")
+        draw_button.setToolTip("Click two points on the QGIS map canvas to define the section line")
+        draw_button.clicked.connect(self._start_section_line_map_tool)
         manual_button = QPushButton("Manual Coordinates")
         manual_button.setToolTip("Set section line from the coordinate fields above")
         manual_button.clicked.connect(self._use_manual_section)
         selected_button = QPushButton("From Selected Line")
         selected_button.setToolTip("Set section line from selected line feature in active layer")
         selected_button.clicked.connect(self._use_selected_line)
+        button_row.addWidget(draw_button)
         button_row.addWidget(manual_button)
         button_row.addWidget(selected_button)
         layout.addLayout(button_row)
@@ -313,6 +323,34 @@ class SectionGeoreferencerDock(QDockWidget):
         row2.addWidget(package_button)
         layout.addLayout(row2)
         return group
+
+    def _start_section_line_map_tool(self):
+        try:
+            canvas = self.iface.mapCanvas()
+        except Exception:
+            self._warn("QGIS map canvas is not available.")
+            return
+        self.previous_map_tool = canvas.mapTool()
+        self.section_line_tool = SectionLineMapTool(canvas, self._finish_drawn_section_line)
+        canvas.setMapTool(self.section_line_tool)
+        self._info("Click P0 then P1 on the map canvas to define the section line.")
+
+    def _finish_drawn_section_line(self, p0, p1):
+        try:
+            self._set_section((p0.x(), p0.y()), (p1.x(), p1.y()))
+            self._update_workflow_state()
+        except ValueError as exc:
+            self._warn(str(exc))
+            return
+        try:
+            canvas = self.iface.mapCanvas()
+            if self.previous_map_tool is not None:
+                canvas.setMapTool(self.previous_map_tool)
+        except Exception:
+            pass
+        self.section_line_tool = None
+        self.previous_map_tool = None
+        self._info("Section line set from map XY clicks.")
 
     def _use_manual_section(self):
         try:
@@ -1059,6 +1097,24 @@ def _float_or_default(text, default):
         return float(str(text).strip())
     except ValueError:
         return default
+
+
+class SectionLineMapTool(QgsMapToolEmitPoint):
+    """Two-click map tool for defining the section line in map XY space."""
+
+    def __init__(self, canvas, finished_callback):
+        super().__init__(canvas)
+        self.canvas = canvas
+        self.finished_callback = finished_callback
+        self.points = []
+        self.canvasClicked.connect(self._on_canvas_clicked)
+
+    def _on_canvas_clicked(self, point, button):
+        if button != Qt.LeftButton:
+            return
+        self.points.append(point)
+        if len(self.points) >= 2:
+            self.finished_callback(self.points[0], self.points[1])
 
 
 def _empty_gps_summary():
