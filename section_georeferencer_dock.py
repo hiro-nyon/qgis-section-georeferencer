@@ -702,11 +702,24 @@ class SectionGeoreferencerDock(QDockWidget):
         package_config["package_files"] = {
             "section_background": "section_background.png",
             "section_preview": "section_preview.png",
+            "section_background_georeferenced": "section_background_georeferenced.tif",
             "gps_projected": "gps_projected.csv",
             "plateau_projected": "plateau_projected.geojson",
             "world_projected": "world_projected.geojson",
             "section_projected_gpkg": "section_projected.gpkg",
             "projection_summary": "projection_summary.json",
+        }
+        package_config["geotiff"] = {
+            "path": "section_background_georeferenced.tif",
+            "coordinate_model": "section_space",
+            "x_axis": "s_along_section",
+            "y_axis": "z_section",
+            "crs_authid": package_config.get("crs", ""),
+            "warning": (
+                "GeoTIFF coordinates are section coordinates (s,z_section), "
+                "not map x/y. Use section_config.json p0/p1 to reconstruct "
+                "world/project CRS relationships."
+            ),
         }
 
         projection_summary = self._build_projection_summary(export_timestamp)

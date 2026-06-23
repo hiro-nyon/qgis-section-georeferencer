@@ -48,12 +48,14 @@ def export_section_analysis_package(
     config_path = os.path.join(output_dir, "section_config.json")
     gps_path = os.path.join(output_dir, "gps_projected.csv")
     plateau_path = os.path.join(output_dir, "plateau_projected.geojson")
+    geotiff_path = os.path.join(output_dir, "section_background_georeferenced.tif")
     world_path = os.path.join(output_dir, "world_projected.geojson")
     gpkg_path = os.path.join(output_dir, "section_projected.gpkg")
     summary_path = os.path.join(output_dir, "projection_summary.json")
 
     canvas.export_background_png(background_path)
     canvas.export_png(preview_path)
+    _export_section_geotiff_if_possible(canvas, geotiff_path, config)
 
     crs_auth_id = config.get("crs", "")
 
@@ -77,6 +79,7 @@ def export_section_analysis_package(
         "section_config.json": config_path,
         "gps_projected.csv": gps_path,
         "plateau_projected.geojson": plateau_path,
+        "section_background_georeferenced.tif": geotiff_path,
         "world_projected.geojson": world_path,
         "section_projected.gpkg": gpkg_path,
         "projection_summary.json": summary_path,
@@ -85,6 +88,16 @@ def export_section_analysis_package(
 
 def utc_timestamp():
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _export_section_geotiff_if_possible(canvas, path, config):
+    transform = config.get("transform") or {}
+    pixel_to_section = transform.get("pixel_to_section")
+    if not pixel_to_section:
+        return
+    geotiff = config.get("geotiff") or {}
+    crs_auth_id = geotiff.get("crs_authid") or None
+    canvas.export_section_geotiff(path, pixel_to_section, crs_auth_id)
 
 
 def write_json(path, data):

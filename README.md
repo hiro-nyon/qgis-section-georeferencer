@@ -132,6 +132,8 @@ Use **Export Section Analysis Package** to write a folder that can be validated
 outside QGIS. The package contains:
 
 - `section_background.png`: the original section image without GPS overlay
+- `section_background_georeferenced.tif`: GeoTIFF version of the section
+  background, georeferenced in section coordinates
 - `section_preview.png`: section image with current projected overlays
 - `section_config.json`: CRS, section line, buffer, z offset, image size, GCPs,
   affine transforms, RMS residual, source layer names, and export timestamp
@@ -141,6 +143,21 @@ outside QGIS. The package contains:
   segments in section coordinates
 - `projection_summary.json`: processing counts and warnings
 - `gcp_residuals.csv`: written when transform residuals are available
+
+The GeoTIFF uses the fitted affine transform as a raster GeoTransform:
+
+```text
+GeoTIFF X = s_along_section
+GeoTIFF Y = z_section
+```
+
+This is useful for external Python/GDAL workflows that want a georeferenced
+section raster. It is not a normal plan-view map raster. Even if the QGIS
+project CRS is EPSG:4979 or EPSG:6697, the GeoTIFF grid axes are still section
+axes `(s, z_section)`, not longitude/latitude or map x/y. Use
+`section_config.json` for the section line `p0/p1`, height offset, and affine
+metadata needed to reconstruct the relationship to the original 3D project
+coordinates.
 
 GPS CSV export intentionally includes points outside the section buffer with
 `inside_buffer=false`. This allows vertical stratification to be checked

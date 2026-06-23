@@ -81,6 +81,73 @@ class SectionCanvas(QGraphicsView):
         if pixmap.isNull() or not pixmap.save(path, "PNG"):
             raise ValueError("Could not export background PNG: {}".format(path))
 
+    def export_section_geotiff(self, path, pixel_to_section_coeffs, crs_auth_id=None):
+        """Export the background image as a section-space GeoTIFF.
+
+        GeoTransform coordinates are section coordinates:
+        X = s, Y = z_section. This is intentionally not a true map x/y raster.
+        The section line in the package config is required to reconstruct the
+        corresponding 3D world/project CRS relation.
+        """
+        if self.image_item is None:
+            raise ValueError("No section image is loaded.")
+        try:
+            from osgeo import gdal, osr
+        except ImportError as exc:
+            raise ValueError(
+                "GDAL Python bindings are required to export GeoTIFF. "
+                "They are included with QGIS."
+            ) from exc
+
+        pixmap = self.image_item.pixmap()
+        if pixmap.isNull():
+            raise ValueError("No section image is loaded.")
+
+        import os
+        import tempfile
+
+        temp_fd, temp_path = tempfile.mkstemp(suffix=".png")
+        os.close(temp_fd)
+        try:
+            if not pixmap.save(temp_path, "PNG"):
+                raise ValueError("Could not prepare temporary PNG for GeoTIFF export.")
+            src = gdal.Open(temp_path)
+            if src is None:
+                raise ValueError("GDAL could not open temporary PNG.")
+            driver = gdal.GetDriverByName("GTiff")
+            if driver is None:
+                raise ValueError("GDAL GTiff driver is not available.")
+            dst = driver.CreateCopy(str(path), src, strict=0, options=["COMPRESS=LZW"])
+            src = None
+            if dst is None:
+                raise ValueError("Could not create GeoTIFF: {}".format(path))
+
+            s_coeffs = pixel_to_section_coeffs["s"]
+            z_coeffs = pixel_to_section_coeffs["z"]
+            dst.SetGeoTransform(
+                (
+                    float(s_coeffs[0]),
+                    float(s_coeffs[1]),
+                    float(s_coeffs[2]),
+                    float(z_coeffs[0]),
+                    float(z_coeffs[1]),
+                    float(z_coeffs[2]),
+                )
+            )
+            if crs_auth_id:
+                srs = osr.SpatialReference()
+                if srs.SetFromUserInput(str(crs_auth_id)) == 0:
+                    dst.SetProjection(srs.ExportToWkt())
+            dst.SetMetadataItem("SECTION_COORDINATE_MODEL", "X=s_along_section,Y=z_section")
+            dst.SetMetadataItem("SECTION_GEOREFERENCE_NOTE", "This GeoTIFF is georeferenced in section coordinates, not map x/y.")
+            dst.FlushCache()
+            dst = None
+        finally:
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+
     def draw_gcp_markers(self, gcps):
         self.clear_gcp_markers()
         for index, gcp in enumerate(gcps, start=1):
