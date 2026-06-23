@@ -1,0 +1,15 @@
+[general]
+name=Section Georeferencer
+description=Georeference architectural section drawings and overlay projected 3D geospatial data.
+version=0.1.0
+qgisMinimumVersion=3.28
+author=Research MVP
+email=
+category=Vector
+about=Research MVP plugin for section-coordinate georeferencing of architectural drawings and projection of PLATEAU/GPS/CAD-derived 3D data into section coordinates.
+tags=section,georeferencing,plateau,gps,cad,3d
+homepage=
+repository=
+tracker=
+experimental=True
+deprecated=False
