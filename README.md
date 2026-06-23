@@ -35,18 +35,20 @@ The plugin adds a toolbar/menu action named **Section Georeferencer**.
 2. Load PLATEAU, GPS, or CAD-derived vector layers into QGIS.
 3. Open **Plugins > Section Georeferencer**.
 4. Define the section line from manual coordinates or a selected line feature.
-5. Load a scanned/paper CAD section drawing image that was already converted
+5. Select the target PLATEAU building feature and click **Load Selected
+   PLATEAU Reference**. The reference section appears in the dock.
+6. Load a scanned/paper CAD section drawing image that was already converted
    from PDF or scan data to PNG, JPEG, or TIFF.
-6. Click the image and add at least 3 GCPs from image pixels `(u, v)` to
-   section coordinates `(s, z)`.
-7. Click **Compute Transform**.
-8. Project an active GPS point layer or active PLATEAU/CAD vector layer.
+7. For each GCP, click the CAD image to pick source pixel `(u, v)`, then click
+   the PLATEAU reference section to fill target `(s, z)`.
+8. Add at least 3 GCPs and click **Compute Transform**.
+9. Project an active GPS point layer or active PLATEAU/CAD vector layer.
    If one PLATEAU building feature is selected in the active layer, only that
    selected building is projected. If no feature is selected, the active vector
    layer is processed.
-9. Export the overlaid section as PNG, or export a reproducible section
+10. Export the overlaid section as PNG, or export a reproducible section
    analysis package.
-10. Save or load the JSON configuration as needed.
+11. Save or load the JSON configuration as needed.
 
 ## Paper CAD / PLATEAU / GPS Handoff Model
 
@@ -55,9 +57,11 @@ The intended handoff is:
 1. In QGIS, prepare the project CRS, for example EPSG:6697.
 2. Load the scanned CAD section drawing as the section background image.
 3. Define a section line in the QGIS project CRS.
-4. Use GCPs to fit the CAD image pixel space to section coordinates `(s, z)`.
-5. Select the relevant PLATEAU building feature if only one building should be
-   used as the reference geometry.
+4. Select the relevant PLATEAU building feature and load it as the reference
+   section in the plugin.
+5. Use GCPs to fit the CAD image pixel space to PLATEAU-derived section
+   coordinates `(s, z)`: click the CAD image for `(u, v)` and the PLATEAU
+   reference view for `(s, z)`.
 6. Project PLATEAU/CAD and GPS layers.
 7. Export **Section Analysis Package**.
 8. In any normal Python environment, use the exported background image plus

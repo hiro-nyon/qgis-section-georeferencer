@@ -8,6 +8,8 @@ Required packages:
     pandas, numpy, matplotlib, pillow
 
 Optional:
+    pyproj, for CRS transformation (e.g. WGS84 GPS → project CRS)
+    geopandas, for loading world_projected.geojson / section_projected.gpkg
     scikit-learn, for Gaussian mixture cluster centers of z_section
 """
 
@@ -31,6 +33,15 @@ import matplotlib.pyplot as plt
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("package_dir", help="Folder exported by Section Georeferencer")
+    parser.add_argument(
+        "--extra-gps",
+        help="CSV with lon,lat,z columns (WGS84) to overlay on the section",
+    )
+    parser.add_argument(
+        "--extra-crs",
+        default="EPSG:4326",
+        help="CRS of --extra-gps coordinates (default: EPSG:4326)",
+    )
     args = parser.parse_args()
     package_dir = Path(args.package_dir)
 
@@ -39,10 +50,21 @@ def main():
     gps = read_gps(package_dir / "gps_projected.csv")
     plateau = load_plateau_geojson(package_dir / "plateau_projected.geojson")
 
-    plot_overlay(background, gps, plateau, package_dir / "validation_overlay.png", config)
+    extra_records = []
+    if args.extra_gps:
+        extra_records = project_external_gps(
+            Path(args.extra_gps), config, args.extra_crs
+        )
+
+    plot_overlay(
+        background, gps, plateau, package_dir / "validation_overlay.png", config,
+        extra_records=extra_records,
+    )
     plot_z_histogram(gps, package_dir / "validation_z_histogram.png")
     write_floor_counts(package_dir, gps)
     maybe_write_gmm_centers(package_dir, gps)
+    report_world_geojson(package_dir)
+    report_geopackage(package_dir)
 
 
 def load_json(path):
@@ -50,13 +72,43 @@ def load_json(path):
         return json.load(file_obj)
 
 
-def project_world_xyz_to_pixel(x, y, z, config):
+def transform_crs(x, y, z, source_crs, target_crs):
+    """Transform coordinates between CRS using pyproj.
+
+    Example:
+        x, y, z = transform_crs(139.7, 35.6, 30.0, "EPSG:4326", "EPSG:6677")
+    """
+    try:
+        from pyproj import Transformer
+    except ImportError:
+        raise ImportError(
+            "pyproj is required for CRS transformation. "
+            "Install with: pip install pyproj"
+        )
+    transformer = Transformer.from_crs(source_crs, target_crs, always_xy=True)
+    x_out, y_out = transformer.transform(float(x), float(y))
+    return float(x_out), float(y_out), float(z)
+
+
+def project_world_xyz_to_pixel(x, y, z, config, source_crs=None):
     """Project one world/project CRS XYZ point to section image pixels.
 
     This mirrors the plugin's math and is useful when a separate Python
     workflow has GPS/PLATEAU coordinates already transformed to the same CRS as
     section_config.json, for example EPSG:6697.
+
+    If source_crs is given (e.g. "EPSG:4326" for WGS84 GPS coordinates),
+    the point is transformed to the section's project CRS before projection.
+
+    Example with WGS84 GPS data:
+        result = project_world_xyz_to_pixel(
+            139.745, 35.658, 32.5, config, source_crs="EPSG:4326"
+        )
     """
+    target_crs = config.get("crs", "")
+    if source_crs and target_crs and source_crs != target_crs:
+        x, y, z = transform_crs(x, y, z, source_crs, target_crs)
+
     section = config["section"]
     height = config.get("height") or {}
     transform = config["transform"]["section_to_pixel"]
@@ -112,7 +164,72 @@ def load_plateau_geojson(path):
     return load_json(path)
 
 
-def plot_overlay(background, gps, plateau, output_path, config):
+def project_external_gps(csv_path, config, source_crs="EPSG:4326"):
+    """Project an external GPS CSV (lon,lat,z or x,y,z) onto the section."""
+    df = pd.read_csv(csv_path)
+    lon_col = _first_col(df, ["lon", "longitude", "x", "lng"])
+    lat_col = _first_col(df, ["lat", "latitude", "y"])
+    z_col = _first_col(df, ["z", "altitude", "elevation", "height", "alt"])
+    if lon_col is None or lat_col is None or z_col is None:
+        print("Warning: --extra-gps CSV must have lon/lat/z columns")
+        return []
+    records = []
+    for _, row in df.iterrows():
+        try:
+            result = project_world_xyz_to_pixel(
+                float(row[lon_col]),
+                float(row[lat_col]),
+                float(row[z_col]),
+                config,
+                source_crs=source_crs,
+            )
+            records.append(result)
+        except Exception:
+            continue
+    return records
+
+
+def _first_col(df, candidates):
+    lower_to_name = {c.lower(): c for c in df.columns}
+    for c in candidates:
+        if c in df.columns:
+            return c
+        match = lower_to_name.get(c.lower())
+        if match:
+            return match
+    return None
+
+
+def report_world_geojson(package_dir):
+    path = package_dir / "world_projected.geojson"
+    if not path.exists():
+        return
+    data = load_json(path)
+    n = len(data.get("features", []))
+    crs = data.get("crs_auth_id", "unknown")
+    print("world_projected.geojson: {} features, CRS={}".format(n, crs))
+
+
+def report_geopackage(package_dir):
+    path = package_dir / "section_projected.gpkg"
+    if not path.exists():
+        return
+    try:
+        import geopandas as gpd
+        import fiona
+        layers = fiona.listlayers(str(path))
+        for layer_name in layers:
+            gdf = gpd.read_file(str(path), layer=layer_name)
+            print(
+                "section_projected.gpkg/{}: {} features, CRS={}".format(
+                    layer_name, len(gdf), gdf.crs
+                )
+            )
+    except ImportError:
+        print("section_projected.gpkg: exists (install geopandas to inspect)")
+
+
+def plot_overlay(background, gps, plateau, output_path, config, extra_records=None):
     fig, ax = plt.subplots(figsize=(12, 8))
     ax.imshow(background)
     draw_plateau(ax, plateau)
@@ -134,7 +251,19 @@ def plot_overlay(background, gps, plateau, output_path, config):
             alpha=0.75,
             label="inside buffer",
         )
-        ax.legend(loc="best")
+    if extra_records:
+        extra_u = [r["u"] for r in extra_records]
+        extra_v = [r["v"] for r in extra_records]
+        ax.scatter(
+            extra_u,
+            extra_v,
+            s=12,
+            c="#e63946",
+            alpha=0.85,
+            marker="^",
+            label="external GPS",
+        )
+    ax.legend(loc="best")
     ax.set_title("GPS projected on section image")
     ax.set_xlim(0, background.width)
     ax.set_ylim(background.height, 0)

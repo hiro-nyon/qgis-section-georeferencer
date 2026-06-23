@@ -226,6 +226,12 @@ def project_vector_layer_vertices(
                         "z0": last_record["z_section"],
                         "s1": record["s"],
                         "z1": record["z_section"],
+                        "x0": last_record["x"],
+                        "y0": last_record["y"],
+                        "z_raw0": last_record["z_raw"],
+                        "x1": record["x"],
+                        "y1": record["y"],
+                        "z_raw1": record["z_raw"],
                     }
                 )
             last_record = record if inside_buffer else None
