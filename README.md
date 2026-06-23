@@ -40,7 +40,9 @@ The plugin adds a toolbar/menu action named **Section Georeferencer**.
 6. Load a scanned/paper CAD section drawing image that was already converted
    from PDF or scan data to PNG, JPEG, or TIFF.
 7. For each GCP, click the CAD image to pick source pixel `(u, v)`, then click
-   the PLATEAU reference section to fill target `(s, z)`.
+   the PLATEAU reference section to fill target `(s, z)`. The PLATEAU reference
+   view snaps to projected vertices, segment endpoints, and nearest points on
+   projected segments.
 8. Add at least 3 GCPs and click **Compute Transform**.
 9. Project an active GPS point layer or active PLATEAU/CAD vector layer.
    If one PLATEAU building feature is selected in the active layer, only that
@@ -65,8 +67,8 @@ The intended handoff is:
    section in the plugin.
 6. Load the scanned CAD section drawing as the section background image.
 7. Use GCPs to fit the CAD image pixel space to PLATEAU-derived section
-   coordinates `(s, z)`: click the CAD image for `(u, v)` and the PLATEAU
-   reference view for `(s, z)`.
+   coordinates `(s, z)`: click the CAD image for `(u, v)` and click/snapped-pick
+   the PLATEAU reference view for `(s, z)`.
 8. Project PLATEAU/CAD and GPS layers.
 9. Export **Section Analysis Package**.
 10. In any normal Python environment, use the exported background image plus

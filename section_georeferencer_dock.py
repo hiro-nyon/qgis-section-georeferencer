@@ -5,19 +5,22 @@ from __future__ import annotations
 import os
 
 from qgis.PyQt.QtCore import Qt
-from qgis.PyQt.QtGui import QColor, QCursor
+from qgis.PyQt.QtGui import QColor, QCursor, QFont, QIcon
 from qgis.PyQt.QtWidgets import (
     QAbstractItemView,
     QDockWidget,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -42,6 +45,100 @@ from .transforms import compute_section_basis, fit_affine_pixel_to_section
 
 PLUGIN_NAME = "Section Georeferencer"
 PLUGIN_VERSION = "0.1.0"
+
+_STEP_DONE = "✓"
+_STEP_BULLET = "•"
+
+_DOCK_STYLESHEET = """
+QDockWidget {
+    font-size: 13px;
+}
+QDockWidget::title {
+    padding: 6px 10px;
+}
+
+/* Group boxes as workflow steps */
+QGroupBox {
+    font-weight: bold;
+    font-size: 12px;
+    border: 1px solid palette(mid);
+    border-radius: 4px;
+    margin-top: 8px;
+    padding: 10px 8px 8px 8px;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    padding: 2px 8px;
+    left: 6px;
+}
+
+/* Form fields */
+QLineEdit {
+    padding: 4px 6px;
+    border: 1px solid palette(mid);
+    border-radius: 3px;
+    font-size: 12px;
+    min-height: 22px;
+}
+QLineEdit:focus {
+    border-color: #378ADD;
+}
+
+/* Buttons */
+QPushButton {
+    padding: 5px 10px;
+    border: 1px solid palette(mid);
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: bold;
+    min-height: 22px;
+}
+QPushButton:hover {
+    background-color: palette(midlight);
+}
+QPushButton:pressed {
+    background-color: palette(mid);
+}
+QPushButton[primary="true"] {
+    background-color: #378ADD;
+    color: white;
+    border-color: #2B7BD0;
+}
+QPushButton[primary="true"]:hover {
+    background-color: #2B7BD0;
+}
+QPushButton[danger="true"] {
+    color: #A32D2D;
+    border-color: #E24B4A;
+}
+
+/* Table */
+QTableWidget {
+    border: 1px solid palette(mid);
+    border-radius: 3px;
+    font-size: 11px;
+    gridline-color: palette(midlight);
+    selection-background-color: #E6F1FB;
+    selection-color: palette(text);
+}
+QTableWidget::item {
+    padding: 3px 4px;
+}
+QHeaderView::section {
+    background-color: palette(window);
+    border: none;
+    border-bottom: 1px solid palette(mid);
+    font-size: 11px;
+    font-weight: bold;
+    padding: 4px 6px;
+}
+
+/* Scroll area */
+QScrollArea {
+    border: none;
+}
+"""
 
 
 class SectionGeoreferencerDock(QDockWidget):
@@ -81,24 +178,32 @@ class SectionGeoreferencerDock(QDockWidget):
 
     def _build_ui(self):
         root = QWidget(self)
+        root.setStyleSheet(_DOCK_STYLESHEET)
         root_layout = QVBoxLayout(root)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
 
         self.status_label = QLabel("Ready")
         self.status_label.setWordWrap(True)
         self.status_label.setStyleSheet(
-            "padding: 4px 8px; border-left: 4px solid transparent;"
+            "padding: 6px 12px; font-size: 12px;"
+            "border-left: 3px solid #378ADD;"
+            "background-color: palette(window);"
         )
         root_layout.addWidget(self.status_label)
 
         self.canvas = SectionCanvas()
-        self.canvas.setMinimumHeight(340)
+        self.canvas.setMinimumHeight(300)
         self.canvas.clickedPixel.connect(self._on_canvas_clicked)
         root_layout.addWidget(self.canvas, stretch=1)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
         controls = QWidget()
         controls_layout = QVBoxLayout(controls)
+        controls_layout.setContentsMargins(6, 4, 6, 4)
+        controls_layout.setSpacing(2)
         controls_layout.addWidget(self._section_group())
         controls_layout.addWidget(self._reference_group())
         controls_layout.addWidget(self._image_group())
@@ -112,28 +217,30 @@ class SectionGeoreferencerDock(QDockWidget):
         self.setWidget(root)
 
     def _reference_group(self):
-        self._reference_group_box = QGroupBox("2. PLATEAU Reference Section")
+        self._reference_group_box = QGroupBox("2. PLATEAU reference")
         layout = QVBoxLayout(self._reference_group_box)
+        layout.setSpacing(6)
         self.reference_info_label = QLabel(
-            "Select one PLATEAU building feature, then load it as the GCP target reference."
+            "Select a PLATEAU building feature, then load as snap target for GCPs."
         )
         self.reference_info_label.setWordWrap(True)
-        self.reference_info_label.setStyleSheet("color: #666;")
+        self.reference_info_label.setStyleSheet("color: palette(dark); font-size: 11px;")
         layout.addWidget(self.reference_info_label)
         self.reference_canvas = SectionReferenceCanvas()
-        self.reference_canvas.setMinimumHeight(180)
+        self.reference_canvas.setMinimumHeight(140)
         self.reference_canvas.clickedSection.connect(self._on_reference_clicked)
         layout.addWidget(self.reference_canvas)
         button_row = QHBoxLayout()
-        load_button = QPushButton("Load Selected PLATEAU Reference")
+        button_row.setSpacing(4)
+        load_button = _primary_button("Load selected")
         load_button.setToolTip(
             "Project selected PLATEAU/CAD feature(s) into section coordinates.\n"
-            "Click this reference view to fill GCP target s/z."
+            "Click this reference view to snap to vertices/segments and fill GCP target s/z."
         )
         load_button.clicked.connect(self._load_selected_plateau_reference)
-        clear_button = QPushButton("Clear Reference")
+        clear_button = QPushButton("Clear")
         clear_button.clicked.connect(self._clear_plateau_reference)
-        fit_button = QPushButton("Fit Reference")
+        fit_button = QPushButton("Fit")
         fit_button.clicked.connect(self.reference_canvas.fit_to_reference)
         button_row.addWidget(load_button)
         button_row.addWidget(clear_button)
@@ -142,30 +249,57 @@ class SectionGeoreferencerDock(QDockWidget):
         return self._reference_group_box
 
     def _section_group(self):
-        self._section_group_box = QGroupBox("1. Section Line")
+        self._section_group_box = QGroupBox("1. Section line")
         layout = QVBoxLayout(self._section_group_box)
-        form = QFormLayout()
+        layout.setSpacing(6)
+
+        p0_row = QHBoxLayout()
+        p0_row.setSpacing(6)
         self.x0_edit = QLineEdit()
         self.y0_edit = QLineEdit()
-        self.x1_edit = QLineEdit()
-        self.y1_edit = QLineEdit()
-        for widget in (self.x0_edit, self.y0_edit, self.x1_edit, self.y1_edit):
+        p0_label = QLabel("P0")
+        p0_label.setStyleSheet("font-weight: bold; font-size: 11px; color: palette(dark); min-width: 20px;")
+        p0_row.addWidget(p0_label)
+        for lbl, widget in [("x", self.x0_edit), ("y", self.y0_edit)]:
             widget.setPlaceholderText("0.0")
             widget.setToolTip("Project CRS coordinate")
-        form.addRow("P0 x", self.x0_edit)
-        form.addRow("P0 y", self.y0_edit)
-        form.addRow("P1 x", self.x1_edit)
-        form.addRow("P1 y", self.y1_edit)
-        layout.addLayout(form)
+            col = QVBoxLayout()
+            col.setSpacing(1)
+            fl = QLabel(lbl)
+            fl.setStyleSheet("font-size: 10px; color: palette(dark);")
+            col.addWidget(fl)
+            col.addWidget(widget)
+            p0_row.addLayout(col)
+        layout.addLayout(p0_row)
+
+        p1_row = QHBoxLayout()
+        p1_row.setSpacing(6)
+        self.x1_edit = QLineEdit()
+        self.y1_edit = QLineEdit()
+        p1_label = QLabel("P1")
+        p1_label.setStyleSheet("font-weight: bold; font-size: 11px; color: palette(dark); min-width: 20px;")
+        p1_row.addWidget(p1_label)
+        for lbl, widget in [("x", self.x1_edit), ("y", self.y1_edit)]:
+            widget.setPlaceholderText("0.0")
+            widget.setToolTip("Project CRS coordinate")
+            col = QVBoxLayout()
+            col.setSpacing(1)
+            fl = QLabel(lbl)
+            fl.setStyleSheet("font-size: 10px; color: palette(dark);")
+            col.addWidget(fl)
+            col.addWidget(widget)
+            p1_row.addLayout(col)
+        layout.addLayout(p1_row)
 
         button_row = QHBoxLayout()
-        draw_button = QPushButton("Draw Line on Map (XY)")
+        button_row.setSpacing(4)
+        draw_button = QPushButton("Draw on map")
         draw_button.setToolTip("Click two points on the QGIS map canvas to define the section line")
         draw_button.clicked.connect(self._start_section_line_map_tool)
-        manual_button = QPushButton("Manual Coordinates")
+        manual_button = QPushButton("Manual")
         manual_button.setToolTip("Set section line from the coordinate fields above")
         manual_button.clicked.connect(self._use_manual_section)
-        selected_button = QPushButton("From Selected Line")
+        selected_button = QPushButton("From line")
         selected_button.setToolTip("Set section line from selected line feature in active layer")
         selected_button.clicked.connect(self._use_selected_line)
         button_row.addWidget(draw_button)
@@ -173,30 +307,39 @@ class SectionGeoreferencerDock(QDockWidget):
         button_row.addWidget(selected_button)
         layout.addLayout(button_row)
 
-        self.section_length_label = QLabel("Section length: -")
-        self.project_crs_label = QLabel("Project CRS: -")
+        info_row = QHBoxLayout()
+        info_row.setSpacing(12)
+        self.section_length_label = QLabel("Length: -")
+        self.section_length_label.setStyleSheet("font-size: 11px; color: palette(dark);")
+        self.project_crs_label = QLabel("CRS: -")
+        self.project_crs_label.setStyleSheet("font-size: 11px; color: palette(dark);")
+        info_row.addWidget(self.section_length_label)
+        info_row.addWidget(self.project_crs_label)
+        info_row.addStretch()
+        layout.addLayout(info_row)
+
         self.crs_warning_label = QLabel("")
         self.crs_warning_label.setWordWrap(True)
-        self.crs_warning_label.setStyleSheet("color: #a65f00;")
-        layout.addWidget(self.section_length_label)
-        layout.addWidget(self.project_crs_label)
+        self.crs_warning_label.setStyleSheet("color: #BA7517; font-size: 11px; padding: 2px 0;")
         layout.addWidget(self.crs_warning_label)
         return self._section_group_box
 
     def _image_group(self):
-        self._image_group_box = QGroupBox("3. Section Drawing Image")
+        self._image_group_box = QGroupBox("3. Section image")
         layout = QVBoxLayout(self._image_group_box)
+        layout.setSpacing(6)
         self.image_info_label = QLabel("No image loaded")
         self.image_info_label.setWordWrap(True)
-        self.image_info_label.setStyleSheet("color: #666;")
+        self.image_info_label.setStyleSheet("color: palette(dark); font-size: 11px;")
         layout.addWidget(self.image_info_label)
         button_row = QHBoxLayout()
-        load_button = QPushButton("Load Image")
+        button_row.setSpacing(4)
+        load_button = _primary_button("Load image")
         load_button.setToolTip("Load section image (PNG, JPG, TIFF, PDF)")
         load_button.clicked.connect(self._load_image_dialog)
         clear_button = QPushButton("Clear")
         clear_button.clicked.connect(self._clear_image)
-        fit_button = QPushButton("Fit View")
+        fit_button = QPushButton("Fit view")
         fit_button.clicked.connect(self.canvas.fit_to_image)
         button_row.addWidget(load_button)
         button_row.addWidget(clear_button)
@@ -205,30 +348,42 @@ class SectionGeoreferencerDock(QDockWidget):
         return self._image_group_box
 
     def _gcp_group(self):
-        self._gcp_group_box = QGroupBox("4. GCP Manager")
+        self._gcp_group_box = QGroupBox("4. GCP manager")
         layout = QVBoxLayout(self._gcp_group_box)
-        self.clicked_pixel_label = QLabel("Clicked pixel: -")
+        layout.setSpacing(6)
+
+        self.clicked_pixel_label = QLabel("Pixel: -")
         self.clicked_pixel_label.setToolTip("Click on the section image to pick a pixel position")
+        self.clicked_pixel_label.setStyleSheet("font-size: 11px; color: palette(dark);")
         layout.addWidget(self.clicked_pixel_label)
 
-        form = QFormLayout()
+        sz_row = QHBoxLayout()
+        sz_row.setSpacing(6)
         self.gcp_s_edit = QLineEdit()
         self.gcp_z_edit = QLineEdit()
-        self.gcp_s_edit.setPlaceholderText("distance along section (m)")
+        self.gcp_s_edit.setPlaceholderText("distance (m)")
         self.gcp_z_edit.setPlaceholderText("height (m)")
         self.gcp_s_edit.setToolTip("Distance along the section line from P0 (meters)")
         self.gcp_z_edit.setToolTip("Height at this point (meters, after z_offset)")
-        form.addRow("s (distance)", self.gcp_s_edit)
-        form.addRow("z (height)", self.gcp_z_edit)
-        layout.addLayout(form)
+        for lbl, widget in [("s (distance m)", self.gcp_s_edit), ("z (height m)", self.gcp_z_edit)]:
+            col = QVBoxLayout()
+            col.setSpacing(1)
+            fl = QLabel(lbl)
+            fl.setStyleSheet("font-size: 10px; color: palette(dark);")
+            col.addWidget(fl)
+            col.addWidget(widget)
+            sz_row.addLayout(col)
+        layout.addLayout(sz_row)
 
         button_row = QHBoxLayout()
-        add_button = QPushButton("Add GCP")
+        button_row.setSpacing(4)
+        add_button = _primary_button("Add GCP")
         add_button.setToolTip("Register clicked pixel as a Ground Control Point")
         add_button.clicked.connect(self._add_gcp)
-        delete_button = QPushButton("Delete Selected")
+        delete_button = QPushButton("Delete")
+        delete_button.setProperty("danger", True)
         delete_button.clicked.connect(self._delete_selected_gcp)
-        clear_button = QPushButton("Clear All")
+        clear_button = QPushButton("Clear all")
         clear_button.clicked.connect(self._clear_gcps)
         button_row.addWidget(add_button)
         button_row.addWidget(delete_button)
@@ -240,21 +395,31 @@ class SectionGeoreferencerDock(QDockWidget):
         self.gcp_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.gcp_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.gcp_table.verticalHeader().setVisible(False)
-        self.gcp_table.setMinimumHeight(130)
+        self.gcp_table.setMinimumHeight(110)
+        self.gcp_table.setMaximumHeight(160)
+        self.gcp_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         layout.addWidget(self.gcp_table)
 
-        compute_button = QPushButton("Compute Transform")
+        transform_row = QHBoxLayout()
+        transform_row.setSpacing(6)
+        compute_button = QPushButton("Compute transform")
         compute_button.setToolTip("Compute affine transform from GCPs (minimum 3 required)")
         compute_button.clicked.connect(self._compute_transform)
-        self.rms_label = QLabel("RMS residual: -")
-        layout.addWidget(compute_button)
-        layout.addWidget(self.rms_label)
+        self.rms_label = QLabel("RMS: -")
+        self.rms_label.setStyleSheet("font-size: 11px; color: palette(dark);")
+        transform_row.addWidget(compute_button)
+        transform_row.addWidget(self.rms_label)
+        transform_row.addStretch()
+        layout.addLayout(transform_row)
         return self._gcp_group_box
 
     def _projection_group(self):
-        self._projection_group_box = QGroupBox("5. Layer Projection")
+        self._projection_group_box = QGroupBox("5. Layer projection")
         layout = QVBoxLayout(self._projection_group_box)
-        form = QFormLayout()
+        layout.setSpacing(6)
+
+        params_row = QHBoxLayout()
+        params_row.setSpacing(6)
         self.z_offset_edit = QLineEdit("0.0")
         self.z_offset_edit.setToolTip(
             "Height datum offset: z_section = z_raw - z_offset.\n"
@@ -265,54 +430,68 @@ class SectionGeoreferencerDock(QDockWidget):
             "Maximum perpendicular distance (m) from the section line.\n"
             "Points farther than this are marked outside_buffer."
         )
+        for lbl, widget in [("z offset (m)", self.z_offset_edit), ("Buffer (m)", self.buffer_width_edit)]:
+            col = QVBoxLayout()
+            col.setSpacing(1)
+            fl = QLabel(lbl)
+            fl.setStyleSheet("font-size: 10px; color: palette(dark);")
+            col.addWidget(fl)
+            col.addWidget(widget)
+            params_row.addLayout(col)
+        layout.addLayout(params_row)
+
+        z_field_col = QVBoxLayout()
+        z_field_col.setSpacing(1)
+        z_field_label = QLabel("Height field")
+        z_field_label.setStyleSheet("font-size: 10px; color: palette(dark);")
         self.z_field_edit = QLineEdit()
         self.z_field_edit.setPlaceholderText("auto-detect")
         self.z_field_edit.setToolTip(
             "Attribute field name for height (e.g. measuredHeight).\n"
             "Leave empty to use geometry Z or auto-detect."
         )
-        form.addRow("z offset (m)", self.z_offset_edit)
-        form.addRow("Buffer width (m)", self.buffer_width_edit)
-        form.addRow("Height field", self.z_field_edit)
-        layout.addLayout(form)
+        z_field_col.addWidget(z_field_label)
+        z_field_col.addWidget(self.z_field_edit)
+        layout.addLayout(z_field_col)
 
-        button_row1 = QHBoxLayout()
-        point_button = QPushButton("Project GPS Points")
+        button_row = QHBoxLayout()
+        button_row.setSpacing(4)
+        point_button = QPushButton("GPS points")
         point_button.setToolTip("Project active point layer onto the section as GPS data")
         point_button.clicked.connect(self._project_active_point_layer)
-        vertex_button = QPushButton("Project PLATEAU/CAD")
+        vertex_button = QPushButton("PLATEAU/CAD")
         vertex_button.setToolTip(
             "Project selected features (or all features) from the active vector layer\n"
             "onto the section as building/CAD geometry"
         )
         vertex_button.clicked.connect(self._project_active_vector_layer)
-        button_row1.addWidget(point_button)
-        button_row1.addWidget(vertex_button)
-        layout.addLayout(button_row1)
-
-        clear_button = QPushButton("Clear Overlay")
+        clear_button = QPushButton("Clear overlay")
         clear_button.clicked.connect(self._clear_projected_overlay)
-        layout.addWidget(clear_button)
+        button_row.addWidget(point_button)
+        button_row.addWidget(vertex_button)
+        button_row.addWidget(clear_button)
+        layout.addLayout(button_row)
         return self._projection_group_box
 
     def _export_config_group(self):
         group = QGroupBox("6. Export")
         layout = QVBoxLayout(group)
-        row1 = QHBoxLayout()
-        save_button = QPushButton("Save Config")
+        layout.setSpacing(4)
+
+        from qgis.PyQt.QtWidgets import QGridLayout
+        grid = QGridLayout()
+        grid.setSpacing(4)
+
+        save_button = QPushButton("Save config")
         save_button.setToolTip("Save section line, GCPs, and transform to JSON")
         save_button.clicked.connect(self._save_config_dialog)
-        load_button = QPushButton("Load Config")
+        load_button = QPushButton("Load config")
         load_button.setToolTip("Restore section line, GCPs, and transform from JSON")
         load_button.clicked.connect(self._load_config_dialog)
-        row1.addWidget(save_button)
-        row1.addWidget(load_button)
-        layout.addLayout(row1)
-        row2 = QHBoxLayout()
         export_button = QPushButton("Export PNG")
         export_button.setToolTip("Export the section image with overlaid points as PNG")
         export_button.clicked.connect(self._export_png_dialog)
-        package_button = QPushButton("Export Package")
+        package_button = _primary_button("Export package")
         package_button.setToolTip(
             "Export a complete analysis package:\n"
             "section_config.json, gps_projected.csv,\n"
@@ -320,9 +499,12 @@ class SectionGeoreferencerDock(QDockWidget):
             "section_projected.gpkg, section images"
         )
         package_button.clicked.connect(self._export_section_analysis_package_dialog)
-        row2.addWidget(export_button)
-        row2.addWidget(package_button)
-        layout.addLayout(row2)
+
+        grid.addWidget(save_button, 0, 0)
+        grid.addWidget(load_button, 0, 1)
+        grid.addWidget(export_button, 1, 0)
+        grid.addWidget(package_button, 1, 1)
+        layout.addLayout(grid)
         return group
 
     def _start_section_line_map_tool(self):
@@ -456,7 +638,7 @@ class SectionGeoreferencerDock(QDockWidget):
         self.reference_records = result["draw_records"]
         self.reference_segments = result["draw_segments"]
         self.reference_info_label.setText(
-            "Loaded {} selected feature(s), {} vertices inside buffer. Click reference points to fill target s/z.".format(
+            "Loaded {} selected feature(s), {} vertices inside buffer. Move near a vertex/segment to snap, then click to fill target s/z.".format(
                 len(selected_features),
                 len(result["draw_records"]),
             )
@@ -471,7 +653,7 @@ class SectionGeoreferencerDock(QDockWidget):
         self.reference_records = []
         self.reference_segments = []
         self.reference_info_label.setText(
-            "Select one PLATEAU building feature, then load it as the GCP target reference."
+            "Select a PLATEAU building feature, then load as snap target for GCPs."
         )
         self._info("PLATEAU reference cleared.")
 
@@ -531,7 +713,7 @@ class SectionGeoreferencerDock(QDockWidget):
     def _on_canvas_clicked(self, u, v):
         self.current_pixel = (float(u), float(v))
         self.clicked_pixel_label.setText(
-            "Clicked pixel: u={:.3f}, v={:.3f}".format(u, v)
+            "Pixel: u={:.1f}, v={:.1f}".format(u, v)
         )
 
     def _add_gcp(self):
@@ -970,10 +1152,10 @@ class SectionGeoreferencerDock(QDockWidget):
                 )
             else:
                 self.image_info_label.setText(name)
-            self.image_info_label.setStyleSheet("")
+            self.image_info_label.setStyleSheet("font-size: 11px; color: palette(text);")
         else:
             self.image_info_label.setText("No image loaded")
-            self.image_info_label.setStyleSheet("color: #666;")
+            self.image_info_label.setStyleSheet("font-size: 11px; color: palette(dark);")
 
     def _update_workflow_state(self):
         step1_ok = self.section_p0 is not None and self.section_p1 is not None
@@ -983,27 +1165,36 @@ class SectionGeoreferencerDock(QDockWidget):
 
         if step1_ok and self.section_length is not None:
             self._section_group_box.setTitle(
-                "1. Section Line  [{:.1f} m]".format(self.section_length)
+                "{} 1. Section line  [{:.1f} m]".format(_STEP_DONE, self.section_length)
             )
         else:
-            self._section_group_box.setTitle("1. Section Line")
+            self._section_group_box.setTitle("{} 1. Section line".format(_STEP_BULLET))
+
+        has_ref = bool(self.reference_records or self.reference_segments)
+        if has_ref:
+            n_ref = len(self.reference_records)
+            self._reference_group_box.setTitle(
+                "{} 2. PLATEAU reference  [{} vtx]".format(_STEP_DONE, n_ref)
+            )
+        else:
+            self._reference_group_box.setTitle("{} 2. PLATEAU reference".format(_STEP_BULLET))
 
         if step2_ok:
-            self._image_group_box.setTitle("2. Section Image  [loaded]")
+            self._image_group_box.setTitle("{} 3. Section image  [loaded]".format(_STEP_DONE))
         else:
-            self._image_group_box.setTitle("2. Section Image")
+            self._image_group_box.setTitle("{} 3. Section image".format(_STEP_BULLET))
 
         if step3_ok:
             rms = self.transform_result.get("rms", 0.0)
             self._gcp_group_box.setTitle(
-                "3. GCP Manager  [{} pts, RMS={:.4g}]".format(n_gcps, rms)
+                "{} 4. GCP manager  [{} pts, RMS={:.4g}]".format(_STEP_DONE, n_gcps, rms)
             )
         elif n_gcps > 0:
             self._gcp_group_box.setTitle(
-                "3. GCP Manager  [{}/{} pts]".format(n_gcps, max(3, n_gcps))
+                "{} 4. GCP manager  [{}/{} pts]".format(_STEP_BULLET, n_gcps, max(3, n_gcps))
             )
         else:
-            self._gcp_group_box.setTitle("3. GCP Manager")
+            self._gcp_group_box.setTitle("{} 4. GCP manager".format(_STEP_BULLET))
 
         n_gps = len(self.gps_projected_records)
         n_plateau = len(self.plateau_projected_records)
@@ -1014,10 +1205,10 @@ class SectionGeoreferencerDock(QDockWidget):
             if n_plateau:
                 parts.append("{} PLATEAU".format(n_plateau))
             self._projection_group_box.setTitle(
-                "4. Layer Projection  [{}]".format(", ".join(parts))
+                "{} 5. Layer projection  [{}]".format(_STEP_DONE, ", ".join(parts))
             )
         else:
-            self._projection_group_box.setTitle("4. Layer Projection")
+            self._projection_group_box.setTitle("{} 5. Layer projection".format(_STEP_BULLET))
 
     def _update_gcp_table(self):
         self.gcp_table.setRowCount(len(self.gcps))
@@ -1031,27 +1222,31 @@ class SectionGeoreferencerDock(QDockWidget):
 
     def _update_transform_label(self):
         if self.transform_result is None:
-            self.rms_label.setText("RMS residual: -")
+            self.rms_label.setText("RMS: -")
+            self.rms_label.setStyleSheet("font-size: 11px; color: palette(dark);")
         else:
-            self.rms_label.setText(
-                "RMS residual: {:.6g}".format(self.transform_result.get("rms", 0.0))
+            rms = self.transform_result.get("rms", 0.0)
+            self.rms_label.setText("RMS: {:.4g}".format(rms))
+            self.rms_label.setStyleSheet(
+                "font-size: 11px; font-weight: bold; color: #0F6E56;"
+                "background-color: #E1F5EE; padding: 2px 6px; border-radius: 3px;"
             )
 
     def _update_section_labels(self):
         if self.section_length is None:
-            self.section_length_label.setText("Section length: -")
+            self.section_length_label.setText("Length: -")
         else:
             self.section_length_label.setText(
-                "Section length: {:.3f}".format(self.section_length)
+                "Length: {:.3f} m".format(self.section_length)
             )
         self._update_crs_labels()
 
     def _update_crs_labels(self):
         crs = QgsProject.instance().crs()
         if crs.isValid():
-            self.project_crs_label.setText("Project CRS: {}".format(crs.authid() or crs.description()))
+            self.project_crs_label.setText("CRS: {}".format(crs.authid() or crs.description()))
         else:
-            self.project_crs_label.setText("Project CRS: invalid")
+            self.project_crs_label.setText("CRS: invalid")
         warning = self._project_crs_warning(crs)
         self.crs_warning_label.setText(warning)
 
@@ -1087,10 +1282,22 @@ class SectionGeoreferencerDock(QDockWidget):
 
     def _info(self, message):
         self.status_label.setText(message)
+        self.status_label.setStyleSheet(
+            "padding: 6px 12px; font-size: 12px;"
+            "border-left: 3px solid #1D9E75;"
+            "background-color: palette(window);"
+            "color: #085041;"
+        )
         self._push_message(message, Qgis.Info)
 
     def _warn(self, message):
         self.status_label.setText(message)
+        self.status_label.setStyleSheet(
+            "padding: 6px 12px; font-size: 12px;"
+            "border-left: 3px solid #BA7517;"
+            "background-color: palette(window);"
+            "color: #854F0B;"
+        )
         self._push_message(message, Qgis.Warning)
 
     def _push_message(self, message, level):
@@ -1099,6 +1306,12 @@ class SectionGeoreferencerDock(QDockWidget):
         except Exception:
             if level == Qgis.Critical:
                 QMessageBox.critical(self, PLUGIN_NAME, message)
+
+
+def _primary_button(text):
+    btn = QPushButton(text)
+    btn.setProperty("primary", True)
+    return btn
 
 
 def _format_float(value):

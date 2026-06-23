@@ -317,17 +317,24 @@ class SectionReferenceCanvas(QGraphicsView):
         self.setDragMode(QGraphicsView.ScrollHandDrag)
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
+        self.setMouseTracking(True)
+        self.viewport().setMouseTracking(True)
         self.records = []
         self.segments = []
         self.bounds = None
         self.reference_scale = 1.0
         self.margin = 30.0
+        self.snap_tolerance_px = 12.0
+        self.snap_marker = None
+        self.last_snap = None
 
     def clear_reference(self):
         self._scene.clear()
         self.records = []
         self.segments = []
         self.bounds = None
+        self.snap_marker = None
+        self.last_snap = None
 
     def has_reference(self):
         return bool(self.records or self.segments)
@@ -348,9 +355,24 @@ class SectionReferenceCanvas(QGraphicsView):
     def mousePressEvent(self, event):
         if self.bounds is not None and event.button() == Qt.LeftButton:
             scene_pos = self.mapToScene(event.pos())
-            s, z = self.pixel_to_section(scene_pos.x(), scene_pos.y())
+            snap = self._snap_scene_pos(scene_pos)
+            if snap is not None:
+                s, z = snap["s"], snap["z"]
+            else:
+                s, z = self.pixel_to_section(scene_pos.x(), scene_pos.y())
             self.clickedSection.emit(float(s), float(z))
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self.bounds is not None:
+            scene_pos = self.mapToScene(event.pos())
+            snap = self._snap_scene_pos(scene_pos)
+            self.last_snap = snap
+            if snap is not None:
+                self._show_snap_marker(snap["x"], snap["y"], True)
+            else:
+                self._show_snap_marker(scene_pos.x(), scene_pos.y(), False)
+        super().mouseMoveEvent(event)
 
     def wheelEvent(self, event):
         zoom_in = 1.15
@@ -447,3 +469,102 @@ class SectionReferenceCanvas(QGraphicsView):
             item.setPen(point_pen)
             item.setBrush(point_brush)
             self._scene.addItem(item)
+
+    def _snap_scene_pos(self, scene_pos):
+        candidates = []
+        x = float(scene_pos.x())
+        y = float(scene_pos.y())
+
+        for record in self.records:
+            if record.get("inside_buffer") is False:
+                continue
+            if record.get("s") is None or record.get("z_section") is None:
+                continue
+            px, py = self.section_to_pixel(record["s"], record["z_section"])
+            candidates.append(
+                {
+                    "x": px,
+                    "y": py,
+                    "s": float(record["s"]),
+                    "z": float(record["z_section"]),
+                    "kind": "vertex",
+                }
+            )
+
+        for segment in self.segments:
+            if None in (
+                segment.get("s0"),
+                segment.get("z0"),
+                segment.get("s1"),
+                segment.get("z1"),
+            ):
+                continue
+            x0, y0 = self.section_to_pixel(segment["s0"], segment["z0"])
+            x1, y1 = self.section_to_pixel(segment["s1"], segment["z1"])
+            candidates.append(
+                {
+                    "x": x0,
+                    "y": y0,
+                    "s": float(segment["s0"]),
+                    "z": float(segment["z0"]),
+                    "kind": "segment_endpoint",
+                }
+            )
+            candidates.append(
+                {
+                    "x": x1,
+                    "y": y1,
+                    "s": float(segment["s1"]),
+                    "z": float(segment["z1"]),
+                    "kind": "segment_endpoint",
+                }
+            )
+            closest = _closest_point_on_segment(x, y, x0, y0, x1, y1)
+            if closest is not None:
+                cx, cy = closest
+                s, z = self.pixel_to_section(cx, cy)
+                candidates.append(
+                    {
+                        "x": cx,
+                        "y": cy,
+                        "s": s,
+                        "z": z,
+                        "kind": "segment",
+                    }
+                )
+
+        best = None
+        best_dist2 = self.snap_tolerance_px * self.snap_tolerance_px
+        for candidate in candidates:
+            dx = candidate["x"] - x
+            dy = candidate["y"] - y
+            dist2 = dx * dx + dy * dy
+            if dist2 <= best_dist2:
+                best = candidate
+                best_dist2 = dist2
+        return best
+
+    def _show_snap_marker(self, x, y, snapped):
+        if self.snap_marker is None:
+            self.snap_marker = QGraphicsEllipseItem(-5.0, -5.0, 10.0, 10.0)
+            self.snap_marker.setZValue(100)
+            self._scene.addItem(self.snap_marker)
+        color = QColor(220, 60, 30) if snapped else QColor(120, 120, 120)
+        brush = QColor(color)
+        brush.setAlpha(80 if snapped else 30)
+        pen = QPen(color)
+        pen.setWidthF(1.5 if snapped else 1.0)
+        self.snap_marker.setPen(pen)
+        self.snap_marker.setBrush(QBrush(brush))
+        self.snap_marker.setRect(float(x) - 5.0, float(y) - 5.0, 10.0, 10.0)
+
+
+def _closest_point_on_segment(px, py, x0, y0, x1, y1):
+    dx = float(x1) - float(x0)
+    dy = float(y1) - float(y0)
+    length2 = dx * dx + dy * dy
+    if length2 <= 0.0:
+        return None
+    t = ((float(px) - float(x0)) * dx + (float(py) - float(y0)) * dy) / length2
+    t = max(0.0, min(1.0, t))
+    return float(x0) + t * dx, float(y0) + t * dy
