@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import os
+
 from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction
 
 from .section_georeferencer_dock import SectionGeoreferencerDock
+
+_PLUGIN_DIR = os.path.dirname(__file__)
+_ICON_PATH = os.path.join(_PLUGIN_DIR, "icon.svg")
 
 
 class SectionGeoreferencerPlugin:
@@ -19,7 +25,8 @@ class SectionGeoreferencerPlugin:
         self.dock = None
 
     def initGui(self):
-        self.action = QAction("Section Georeferencer", self.iface.mainWindow())
+        icon = QIcon(_ICON_PATH)
+        self.action = QAction(icon, "Section Georeferencer", self.iface.mainWindow())
         self.action.setObjectName("section_georeferencer_action")
         self.action.setCheckable(True)
         self.action.triggered.connect(self.toggle_dock)
@@ -40,6 +47,7 @@ class SectionGeoreferencerPlugin:
     def toggle_dock(self, checked=False):
         if self.dock is None:
             self.dock = SectionGeoreferencerDock(self.iface)
+            self.dock.setWindowIcon(QIcon(_ICON_PATH))
             self.dock.visibilityChanged.connect(self._dock_visibility_changed)
             self.iface.addDockWidget(Qt.RightDockWidgetArea, self.dock)
         self.dock.setVisible(not self.dock.isVisible() if not checked else True)

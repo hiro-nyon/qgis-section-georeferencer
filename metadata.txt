@@ -13,3 +13,4 @@ repository=
 tracker=
 experimental=True
 deprecated=False
+icon=icon.svg
