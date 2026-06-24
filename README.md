@@ -135,8 +135,10 @@ paths produce a warning while preserving the rest of the loaded configuration.
 
 ## Section Analysis Package Export
 
-Use **Export Section Analysis Package** to write a folder that can be validated
-outside QGIS. The package contains:
+Use **Export Section Analysis Package** to create a named package folder that
+can be validated outside QGIS. Files inside the folder use the package name as
+a prefix, and the exact file names are recorded in `package_files` in the
+exported config. With the default legacy names, the package contains:
 
 - `section_background.png`: the original section image without GPS overlay
 - `section_background_georeferenced.tif`: GeoTIFF version of the section
