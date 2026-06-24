@@ -29,6 +29,19 @@ GPS_COLUMNS = [
     "stay_flag",
 ]
 
+DEFAULT_PACKAGE_FILES = {
+    "section_background": "section_background.png",
+    "section_preview": "section_preview.png",
+    "section_config": "section_config.json",
+    "section_background_georeferenced": "section_background_georeferenced.tif",
+    "gps_projected": "gps_projected.csv",
+    "plateau_projected": "plateau_projected.geojson",
+    "world_projected": "world_projected.geojson",
+    "section_projected_gpkg": "section_projected.gpkg",
+    "projection_summary": "projection_summary.json",
+    "gcp_residuals": "gcp_residuals.csv",
+}
+
 
 def export_section_analysis_package(
     output_dir,
@@ -39,19 +52,24 @@ def export_section_analysis_package(
     plateau_segments,
     projection_summary,
     gcp_residuals=None,
+    file_names=None,
 ):
     """Write the complete section analysis package to an output directory."""
     os.makedirs(output_dir, exist_ok=True)
 
-    background_path = os.path.join(output_dir, "section_background.png")
-    preview_path = os.path.join(output_dir, "section_preview.png")
-    config_path = os.path.join(output_dir, "section_config.json")
-    gps_path = os.path.join(output_dir, "gps_projected.csv")
-    plateau_path = os.path.join(output_dir, "plateau_projected.geojson")
-    geotiff_path = os.path.join(output_dir, "section_background_georeferenced.tif")
-    world_path = os.path.join(output_dir, "world_projected.geojson")
-    gpkg_path = os.path.join(output_dir, "section_projected.gpkg")
-    summary_path = os.path.join(output_dir, "projection_summary.json")
+    package_files = package_file_names(file_names=file_names)
+
+    background_path = os.path.join(output_dir, package_files["section_background"])
+    preview_path = os.path.join(output_dir, package_files["section_preview"])
+    config_path = os.path.join(output_dir, package_files["section_config"])
+    gps_path = os.path.join(output_dir, package_files["gps_projected"])
+    plateau_path = os.path.join(output_dir, package_files["plateau_projected"])
+    geotiff_path = os.path.join(
+        output_dir, package_files["section_background_georeferenced"]
+    )
+    world_path = os.path.join(output_dir, package_files["world_projected"])
+    gpkg_path = os.path.join(output_dir, package_files["section_projected_gpkg"])
+    summary_path = os.path.join(output_dir, package_files["projection_summary"])
 
     canvas.export_background_png(background_path)
     canvas.export_png(preview_path)
@@ -70,20 +88,46 @@ def export_section_analysis_package(
 
     if gcp_residuals:
         write_gcp_residuals_csv(
-            os.path.join(output_dir, "gcp_residuals.csv"), gcp_residuals
+            os.path.join(output_dir, package_files["gcp_residuals"]), gcp_residuals
         )
 
     return {
-        "section_background.png": background_path,
-        "section_preview.png": preview_path,
-        "section_config.json": config_path,
-        "gps_projected.csv": gps_path,
-        "plateau_projected.geojson": plateau_path,
-        "section_background_georeferenced.tif": geotiff_path,
-        "world_projected.geojson": world_path,
-        "section_projected.gpkg": gpkg_path,
-        "projection_summary.json": summary_path,
+        filename: os.path.join(output_dir, filename)
+        for filename in package_files.values()
+        if filename != package_files["gcp_residuals"] or gcp_residuals
     }
+
+
+def package_file_names(package_name=None, file_names=None):
+    names = dict(DEFAULT_PACKAGE_FILES)
+    if package_name:
+        prefix = sanitize_package_name(package_name)
+        names = {
+            key: _prefix_file_name(prefix, value)
+            for key, value in names.items()
+        }
+    if file_names:
+        for key, value in file_names.items():
+            if key in names and value:
+                names[key] = _clean_file_name(value)
+    return names
+
+
+def sanitize_package_name(name):
+    cleaned = str(name or "").strip()
+    for char in '/\\:*?"<>|':
+        cleaned = cleaned.replace(char, "_")
+    cleaned = cleaned.strip(" .")
+    return cleaned or "section_package"
+
+
+def _clean_file_name(name):
+    return sanitize_package_name(os.path.basename(str(name)))
+
+
+def _prefix_file_name(prefix, file_name):
+    stem, extension = os.path.splitext(file_name)
+    return "{}_{}{}".format(prefix, stem, extension)
 
 
 def utc_timestamp():

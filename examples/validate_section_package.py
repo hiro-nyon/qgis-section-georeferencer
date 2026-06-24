@@ -29,6 +29,19 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+DEFAULT_PACKAGE_FILES = {
+    "section_background": "section_background.png",
+    "section_preview": "section_preview.png",
+    "section_config": "section_config.json",
+    "section_background_georeferenced": "section_background_georeferenced.tif",
+    "gps_projected": "gps_projected.csv",
+    "plateau_projected": "plateau_projected.geojson",
+    "world_projected": "world_projected.geojson",
+    "section_projected_gpkg": "section_projected.gpkg",
+    "projection_summary": "projection_summary.json",
+    "gcp_residuals": "gcp_residuals.csv",
+}
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -45,10 +58,14 @@ def main():
     args = parser.parse_args()
     package_dir = Path(args.package_dir)
 
-    config = load_json(package_dir / "section_config.json")
-    background = Image.open(package_dir / "section_background.png").convert("RGB")
-    gps = read_gps(package_dir / "gps_projected.csv")
-    plateau = load_plateau_geojson(package_dir / "plateau_projected.geojson")
+    config = load_json(find_config_path(package_dir))
+    background = Image.open(
+        package_path(package_dir, config, "section_background")
+    ).convert("RGB")
+    gps = read_gps(package_path(package_dir, config, "gps_projected"))
+    plateau = load_plateau_geojson(
+        package_path(package_dir, config, "plateau_projected")
+    )
 
     extra_records = []
     if args.extra_gps:
@@ -63,8 +80,25 @@ def main():
     plot_z_histogram(gps, package_dir / "validation_z_histogram.png")
     write_floor_counts(package_dir, gps)
     maybe_write_gmm_centers(package_dir, gps)
-    report_world_geojson(package_dir)
-    report_geopackage(package_dir)
+    report_world_geojson(package_dir, config)
+    report_geopackage(package_dir, config)
+
+
+def find_config_path(package_dir):
+    default_path = package_dir / DEFAULT_PACKAGE_FILES["section_config"]
+    if default_path.exists():
+        return default_path
+    matches = sorted(package_dir.glob("*_section_config.json"))
+    if len(matches) == 1:
+        return matches[0]
+    raise FileNotFoundError("Could not find section config JSON in {}".format(package_dir))
+
+
+def package_path(package_dir, config, key):
+    file_name = (config.get("package_files") or {}).get(
+        key, DEFAULT_PACKAGE_FILES[key]
+    )
+    return package_dir / file_name
 
 
 def load_json(path):
@@ -200,18 +234,18 @@ def _first_col(df, candidates):
     return None
 
 
-def report_world_geojson(package_dir):
-    path = package_dir / "world_projected.geojson"
+def report_world_geojson(package_dir, config):
+    path = package_path(package_dir, config, "world_projected")
     if not path.exists():
         return
     data = load_json(path)
     n = len(data.get("features", []))
     crs = data.get("crs_auth_id", "unknown")
-    print("world_projected.geojson: {} features, CRS={}".format(n, crs))
+    print("{}: {} features, CRS={}".format(path.name, n, crs))
 
 
-def report_geopackage(package_dir):
-    path = package_dir / "section_projected.gpkg"
+def report_geopackage(package_dir, config):
+    path = package_path(package_dir, config, "section_projected_gpkg")
     if not path.exists():
         return
     try:
@@ -221,12 +255,12 @@ def report_geopackage(package_dir):
         for layer_name in layers:
             gdf = gpd.read_file(str(path), layer=layer_name)
             print(
-                "section_projected.gpkg/{}: {} features, CRS={}".format(
-                    layer_name, len(gdf), gdf.crs
+                "{}/{}: {} features, CRS={}".format(
+                    path.name, layer_name, len(gdf), gdf.crs
                 )
             )
     except ImportError:
-        print("section_projected.gpkg: exists (install geopandas to inspect)")
+        print("{}: exists (install geopandas to inspect)".format(path.name))
 
 
 def plot_overlay(background, gps, plateau, output_path, config, extra_records=None):
