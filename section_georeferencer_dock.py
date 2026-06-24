@@ -5,9 +5,10 @@ from __future__ import annotations
 import os
 
 from qgis.PyQt.QtCore import Qt
-from qgis.PyQt.QtGui import QColor, QCursor, QFont, QIcon
+from qgis.PyQt.QtGui import QColor, QCursor
 from qgis.PyQt.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QDockWidget,
     QFileDialog,
     QFormLayout,
@@ -20,7 +21,7 @@ from qgis.PyQt.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
-    QSizePolicy,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -38,7 +39,12 @@ from qgis.gui import QgsMapTool, QgsRubberBand, QgsVertexMarker
 
 from . import config_io
 from .layer_projector import project_point_layer, project_vector_layer_vertices
-from .package_exporter import export_section_analysis_package, utc_timestamp
+from .package_exporter import (
+    export_section_analysis_package,
+    package_file_names,
+    sanitize_package_name,
+    utc_timestamp,
+)
 from .section_canvas import SectionCanvas, SectionReferenceCanvas
 from .transforms import compute_section_basis, fit_affine_pixel_to_section
 
@@ -192,10 +198,47 @@ class SectionGeoreferencerDock(QDockWidget):
         )
         root_layout.addWidget(self.status_label)
 
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.setChildrenCollapsible(False)
+
+        left_panel = QWidget()
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(0)
+        left_label = QLabel("Section image")
+        left_label.setAlignment(Qt.AlignCenter)
+        left_label.setStyleSheet(
+            "font-size: 11px; font-weight: bold; color: palette(dark);"
+            "padding: 2px 0; background-color: palette(window);"
+            "border-bottom: 1px solid palette(mid);"
+        )
+        left_layout.addWidget(left_label)
         self.canvas = SectionCanvas()
-        self.canvas.setMinimumHeight(300)
+        self.canvas.setMinimumHeight(250)
         self.canvas.clickedPixel.connect(self._on_canvas_clicked)
-        root_layout.addWidget(self.canvas, stretch=1)
+        left_layout.addWidget(self.canvas, stretch=1)
+
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(0)
+        right_label = QLabel("PLATEAU reference")
+        right_label.setAlignment(Qt.AlignCenter)
+        right_label.setStyleSheet(
+            "font-size: 11px; font-weight: bold; color: palette(dark);"
+            "padding: 2px 0; background-color: palette(window);"
+            "border-bottom: 1px solid palette(mid);"
+        )
+        right_layout.addWidget(right_label)
+        self.reference_canvas = SectionReferenceCanvas()
+        self.reference_canvas.setMinimumHeight(250)
+        self.reference_canvas.clickedSection.connect(self._on_reference_clicked)
+        right_layout.addWidget(self.reference_canvas, stretch=1)
+
+        splitter.addWidget(left_panel)
+        splitter.addWidget(right_panel)
+        splitter.setSizes([500, 500])
+        root_layout.addWidget(splitter, stretch=1)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -226,16 +269,12 @@ class SectionGeoreferencerDock(QDockWidget):
         self.reference_info_label.setWordWrap(True)
         self.reference_info_label.setStyleSheet("color: palette(dark); font-size: 11px;")
         layout.addWidget(self.reference_info_label)
-        self.reference_canvas = SectionReferenceCanvas()
-        self.reference_canvas.setMinimumHeight(140)
-        self.reference_canvas.clickedSection.connect(self._on_reference_clicked)
-        layout.addWidget(self.reference_canvas)
         button_row = QHBoxLayout()
         button_row.setSpacing(4)
         load_button = _primary_button("Load selected")
         load_button.setToolTip(
             "Project selected PLATEAU/CAD feature(s) into section coordinates.\n"
-            "Click this reference view to snap to vertices/segments and fill GCP target s/z."
+            "Click the PLATEAU reference panel (right) to snap to vertices/segments and fill GCP target s/z."
         )
         load_button.clicked.connect(self._load_selected_plateau_reference)
         clear_button = QPushButton("Clear")
@@ -246,6 +285,25 @@ class SectionGeoreferencerDock(QDockWidget):
         button_row.addWidget(clear_button)
         button_row.addWidget(fit_button)
         layout.addLayout(button_row)
+
+        option_row = QHBoxLayout()
+        option_row.setSpacing(10)
+        self.reference_snap_check = QCheckBox("Snap")
+        self.reference_snap_check.setChecked(True)
+        self.reference_snap_check.setToolTip(
+            "Snap PLATEAU reference clicks to vertices, segment endpoints, and nearest segment points."
+        )
+        self.reference_snap_check.stateChanged.connect(self._set_reference_snap_enabled)
+        self.reference_overlay_check = QCheckBox("Overlay on CAD")
+        self.reference_overlay_check.setChecked(True)
+        self.reference_overlay_check.setToolTip(
+            "After 3 or more GCPs compute a transform, overlay the PLATEAU reference on the CAD image."
+        )
+        self.reference_overlay_check.stateChanged.connect(self._set_reference_overlay_enabled)
+        option_row.addWidget(self.reference_snap_check)
+        option_row.addWidget(self.reference_overlay_check)
+        option_row.addStretch()
+        layout.addLayout(option_row)
         return self._reference_group_box
 
     def _section_group(self):
@@ -643,6 +701,8 @@ class SectionGeoreferencerDock(QDockWidget):
                 len(result["draw_records"]),
             )
         )
+        self._update_reference_overlay()
+        self._update_workflow_state()
         if result["warnings"]:
             self._warn("PLATEAU reference loaded with warning: {}".format(" ".join(result["warnings"][:3])))
         else:
@@ -652,9 +712,11 @@ class SectionGeoreferencerDock(QDockWidget):
         self.reference_canvas.clear_reference()
         self.reference_records = []
         self.reference_segments = []
+        self.canvas.clear_reference_overlay()
         self.reference_info_label.setText(
             "Select a PLATEAU building feature, then load as snap target for GCPs."
         )
+        self._update_workflow_state()
         self._info("PLATEAU reference cleared.")
 
     def _on_reference_clicked(self, s, z):
@@ -664,6 +726,13 @@ class SectionGeoreferencerDock(QDockWidget):
             _format_float(s),
             _format_float(z),
         ))
+
+    def _set_reference_snap_enabled(self, state):
+        enabled = state == Qt.Checked
+        self.reference_canvas.set_snap_enabled(enabled)
+
+    def _set_reference_overlay_enabled(self, _state):
+        self._update_reference_overlay()
 
     def _set_section(self, p0, p1):
         _direction, _perp, length = compute_section_basis(p0, p1)
@@ -695,7 +764,7 @@ class SectionGeoreferencerDock(QDockWidget):
             return
         self.image_path = path
         self.current_pixel = None
-        self.clicked_pixel_label.setText("Clicked pixel: -")
+        self.clicked_pixel_label.setText("Pixel: -")
         self.canvas.draw_gcp_markers(self.gcps)
         self._update_image_info()
         self._update_workflow_state()
@@ -705,7 +774,7 @@ class SectionGeoreferencerDock(QDockWidget):
         self.canvas.clear_image()
         self.image_path = None
         self.current_pixel = None
-        self.clicked_pixel_label.setText("Clicked pixel: -")
+        self.clicked_pixel_label.setText("Pixel: -")
         self._update_image_info()
         self._update_workflow_state()
         self._info("Image and overlays cleared.")
@@ -759,6 +828,7 @@ class SectionGeoreferencerDock(QDockWidget):
         self.transform_result = None
         self._update_gcp_table()
         self.canvas.clear_gcp_markers()
+        self.canvas.clear_reference_overlay()
         self._update_transform_label()
         self._update_workflow_state()
         self._info("GCPs cleared.")
@@ -769,9 +839,11 @@ class SectionGeoreferencerDock(QDockWidget):
         except (ImportError, ValueError) as exc:
             self.transform_result = None
             self._update_transform_label()
+            self._update_reference_overlay()
             self._warn(str(exc))
             return
         self._update_transform_label()
+        self._update_reference_overlay()
         self._update_workflow_state()
         self._info("Affine transform computed (RMS={:.4g}).".format(
             self.transform_result.get("rms", 0.0)
@@ -923,37 +995,50 @@ class SectionGeoreferencerDock(QDockWidget):
     def _export_section_analysis_package_dialog(self):
         if not self._package_prerequisites_ok():
             return
-        output_dir = QFileDialog.getExistingDirectory(
-            self, "Choose section analysis package output folder", ""
+        default_name = sanitize_package_name(
+            "section_package_{}".format(utc_timestamp())
+        )
+        output_dir, _filter = QFileDialog.getSaveFileName(
+            self, "Create section analysis package folder", default_name, "Folder (*)"
         )
         if not output_dir:
             return
+        if os.path.isfile(output_dir):
+            self._warn("A file already exists at the selected package path.")
+            return
+        if os.path.isdir(output_dir) and os.listdir(output_dir):
+            result = QMessageBox.question(
+                self,
+                "Export package",
+                (
+                    "The selected package folder already exists and is not empty.\n"
+                    "Files with the same names may be overwritten. Continue?"
+                ),
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if result != QMessageBox.Yes:
+                return
         export_timestamp = utc_timestamp()
+        package_name = sanitize_package_name(os.path.basename(output_dir))
+        package_files = package_file_names(package_name)
         package_config = self._build_config()
         image_size = self.canvas.image_size()
+        package_config["package_name"] = package_name
         package_config["export_timestamp"] = export_timestamp
         package_config.setdefault("image", {})["width"] = image_size[0] if image_size else None
         package_config.setdefault("image", {})["height"] = image_size[1] if image_size else None
         package_config["source_layer_names"] = self._source_layer_names()
-        package_config["package_files"] = {
-            "section_background": "section_background.png",
-            "section_preview": "section_preview.png",
-            "section_background_georeferenced": "section_background_georeferenced.tif",
-            "gps_projected": "gps_projected.csv",
-            "plateau_projected": "plateau_projected.geojson",
-            "world_projected": "world_projected.geojson",
-            "section_projected_gpkg": "section_projected.gpkg",
-            "projection_summary": "projection_summary.json",
-        }
+        package_config["package_files"] = package_files
         package_config["geotiff"] = {
-            "path": "section_background_georeferenced.tif",
+            "path": package_files["section_background_georeferenced"],
             "coordinate_model": "section_space",
             "x_axis": "s_along_section",
             "y_axis": "z_section",
             "crs_authid": package_config.get("crs", ""),
             "warning": (
                 "GeoTIFF coordinates are section coordinates (s,z_section), "
-                "not map x/y. Use section_config.json p0/p1 to reconstruct "
+                "not map x/y. Use the exported config p0/p1 to reconstruct "
                 "world/project CRS relationships."
             ),
         }
@@ -972,6 +1057,7 @@ class SectionGeoreferencerDock(QDockWidget):
                 self.plateau_projected_segments,
                 projection_summary,
                 gcp_residuals,
+                package_files,
             )
         except (OSError, ValueError) as exc:
             self._warn("Could not export section analysis package: {}".format(exc))
@@ -1179,6 +1265,8 @@ class SectionGeoreferencerDock(QDockWidget):
         else:
             self._reference_group_box.setTitle("{} 2. PLATEAU reference".format(_STEP_BULLET))
 
+        self.reference_overlay_check.setEnabled(has_ref and step3_ok)
+
         if step2_ok:
             self._image_group_box.setTitle("{} 3. Section image  [loaded]".format(_STEP_DONE))
         else:
@@ -1219,6 +1307,22 @@ class SectionGeoreferencerDock(QDockWidget):
                 item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                 self.gcp_table.setItem(row, column, item)
         self.gcp_table.resizeColumnsToContents()
+
+    def _update_reference_overlay(self):
+        overlay_check = getattr(self, "reference_overlay_check", None)
+        overlay_enabled = overlay_check is None or overlay_check.isChecked()
+        if (
+            not overlay_enabled
+            or self.transform_result is None
+            or not (self.reference_records or self.reference_segments)
+        ):
+            self.canvas.clear_reference_overlay()
+            return
+        self.canvas.draw_reference_overlay(
+            self.reference_records,
+            self.reference_segments,
+            self.transform_result["section_to_pixel"],
+        )
 
     def _update_transform_label(self):
         if self.transform_result is None:
