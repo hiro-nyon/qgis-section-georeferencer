@@ -2,12 +2,24 @@
 
 from __future__ import annotations
 
+import math
+
 from qgis.PyQt.QtCore import QPointF, QRectF, Qt, pyqtSignal
 from qgis.PyQt.QtGui import QBrush, QColor, QImage, QPainter, QPen, QPixmap
 from qgis.PyQt.QtWidgets import QGraphicsEllipseItem, QGraphicsLineItem, QGraphicsScene, QGraphicsTextItem, QGraphicsView
 
 
 PDF_RENDER_DPI = 600
+
+# A large sheet rendered at 600 DPI can reach hundreds of megapixels, and both
+# the QPixmap and the full-resolution PNG export are held in memory. Cap the
+# raster and lower the DPI instead of letting QGIS run out of memory.
+MAX_PDF_PIXELS = 120_000_000
+MIN_PDF_RENDER_DPI = 72
+
+# A left drag pans the view, so a press/release pair is only treated as a
+# coordinate pick when the pointer stayed essentially still.
+CLICK_MOVE_TOLERANCE_PX = 4
 
 
 class SectionCanvas(QGraphicsView):
@@ -28,6 +40,8 @@ class SectionCanvas(QGraphicsView):
         self.gcp_items = []
         self.projected_items = []
         self.reference_overlay_items = []
+        self.highlight_items = []
+        self._press_pos = None
 
     def has_image(self):
         return self.image_item is not None
@@ -54,11 +68,34 @@ class SectionCanvas(QGraphicsView):
         self.gcp_items = []
         self.projected_items = []
         self.reference_overlay_items = []
+        self.highlight_items = []
 
     def clear_gcp_markers(self):
         for item in self.gcp_items:
             self._scene.removeItem(item)
         self.gcp_items = []
+        self.clear_highlight()
+
+    def clear_highlight(self):
+        for item in self.highlight_items:
+            self._scene.removeItem(item)
+        self.highlight_items = []
+
+    def highlight_gcp(self, gcp):
+        """Ring the GCP currently selected in the table."""
+        self.clear_highlight()
+        if gcp is None or self.image_item is None:
+            return
+        u = float(gcp["u"])
+        v = float(gcp["v"])
+        radius = 14.0
+        pen = QPen(QColor(255, 145, 0))
+        pen.setWidthF(2.0)
+        ring = QGraphicsEllipseItem(u - radius, v - radius, radius * 2.0, radius * 2.0)
+        ring.setPen(pen)
+        ring.setZValue(30)
+        self._scene.addItem(ring)
+        self.highlight_items.append(ring)
 
     def clear_projected_overlays(self):
         for item in self.projected_items:
@@ -268,6 +305,13 @@ class SectionCanvas(QGraphicsView):
             int(rect.height()),
             QImage.Format_ARGB32_Premultiplied,
         )
+        if image.isNull():
+            raise ValueError(
+                "Could not allocate a {}x{} px export image. The section image "
+                "is too large to export at full resolution.".format(
+                    int(rect.width()), int(rect.height())
+                )
+            )
         image.fill(Qt.white)
         painter = QPainter(image)
         painter.setRenderHints(
@@ -283,18 +327,32 @@ class SectionCanvas(QGraphicsView):
             raise ValueError("Could not export PNG: {}".format(path))
 
     def mousePressEvent(self, event):
-        if self.image_item is not None and event.button() == Qt.LeftButton:
-            scene_pos = self.mapToScene(event.pos())
-            rect = self.image_item.boundingRect()
-            if rect.contains(QPointF(scene_pos.x(), scene_pos.y())):
-                self.clickedPixel.emit(float(scene_pos.x()), float(scene_pos.y()))
+        if event.button() == Qt.LeftButton:
+            self._press_pos = event.pos()
         super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        press_pos = self._press_pos
+        self._press_pos = None
+        super().mouseReleaseEvent(event)
+        if event.button() != Qt.LeftButton or press_pos is None:
+            return
+        if (event.pos() - press_pos).manhattanLength() > CLICK_MOVE_TOLERANCE_PX:
+            return  # the user panned the view rather than picking a pixel
+        if self.image_item is None:
+            return
+        scene_pos = self.mapToScene(event.pos())
+        if self.image_item.boundingRect().contains(
+            QPointF(scene_pos.x(), scene_pos.y())
+        ):
+            self.clickedPixel.emit(float(scene_pos.x()), float(scene_pos.y()))
 
     def wheelEvent(self, event):
         zoom_in = 1.15
         zoom_out = 1.0 / zoom_in
         factor = zoom_in if event.angleDelta().y() > 0 else zoom_out
         self.scale(factor, factor)
+        event.accept()
 
     def _add_marker(self, u, v, color, size, store, label=None):
         half = size / 2.0
@@ -343,13 +401,21 @@ def _load_pdf_as_pixmap(path):
 
     old_dpi = gdal.GetConfigOption("GDAL_PDF_DPI")
     try:
-        gdal.SetConfigOption("GDAL_PDF_DPI", str(PDF_RENDER_DPI))
+        dpi = PDF_RENDER_DPI
+        gdal.SetConfigOption("GDAL_PDF_DPI", str(dpi))
         ds = gdal.Open(str(path))
         if ds is None:
             raise ValueError(
                 "Could not open PDF with GDAL. "
                 "Ensure the GDAL PDF driver (Poppler or PDFium) is available."
             )
+        dpi = _fit_pdf_dpi(ds.RasterXSize, ds.RasterYSize, dpi)
+        if dpi != PDF_RENDER_DPI:
+            ds = None
+            gdal.SetConfigOption("GDAL_PDF_DPI", str(dpi))
+            ds = gdal.Open(str(path))
+            if ds is None:
+                raise ValueError("Could not re-open PDF at a reduced resolution.")
         temp_fd, temp_path = tempfile.mkstemp(suffix=".png")
         os.close(temp_fd)
         try:
@@ -365,6 +431,15 @@ def _load_pdf_as_pixmap(path):
     finally:
         gdal.SetConfigOption("GDAL_PDF_DPI", old_dpi)
     return pixmap
+
+
+def _fit_pdf_dpi(width, height, dpi):
+    """Reduce the render DPI until the page fits under MAX_PDF_PIXELS."""
+    pixels = int(width) * int(height)
+    if pixels <= MAX_PDF_PIXELS or pixels <= 0:
+        return dpi
+    scale = math.sqrt(MAX_PDF_PIXELS / float(pixels))
+    return max(MIN_PDF_RENDER_DPI, int(dpi * scale))
 
 
 def _export_source_raster_geotiff(
@@ -455,6 +530,7 @@ class SectionReferenceCanvas(QGraphicsView):
         self.snap_enabled = True
         self.snap_marker = None
         self.last_snap = None
+        self._press_pos = None
 
     def clear_reference(self):
         self._scene.clear()
@@ -463,6 +539,7 @@ class SectionReferenceCanvas(QGraphicsView):
         self.bounds = None
         self.snap_marker = None
         self.last_snap = None
+        self._press_pos = None
 
     def has_reference(self):
         return bool(self.records or self.segments)
@@ -474,10 +551,16 @@ class SectionReferenceCanvas(QGraphicsView):
             self._clear_snap_marker()
 
     def load_reference(self, records, segments=None):
+        records = list(records or [])
+        segments = list(segments or [])
+        # Compute bounds first: if the selection has nothing inside the buffer
+        # this raises, and the previously loaded reference is left untouched
+        # instead of being replaced by an empty, unusable one.
+        bounds = self._compute_bounds(records, segments)
         self.clear_reference()
-        self.records = list(records or [])
-        self.segments = list(segments or [])
-        self.bounds = self._compute_bounds()
+        self.records = records
+        self.segments = segments
+        self.bounds = bounds
         self._draw_reference()
         self.fit_to_reference()
 
@@ -487,15 +570,27 @@ class SectionReferenceCanvas(QGraphicsView):
             self.fitInView(rect, Qt.KeepAspectRatio)
 
     def mousePressEvent(self, event):
-        if self.bounds is not None and event.button() == Qt.LeftButton:
-            scene_pos = self.mapToScene(event.pos())
-            snap = self._snap_scene_pos(scene_pos) if self.snap_enabled else None
-            if snap is not None:
-                s, z = snap["s"], snap["z"]
-            else:
-                s, z = self.pixel_to_section(scene_pos.x(), scene_pos.y())
-            self.clickedSection.emit(float(s), float(z))
+        if event.button() == Qt.LeftButton:
+            self._press_pos = event.pos()
         super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        press_pos = self._press_pos
+        self._press_pos = None
+        super().mouseReleaseEvent(event)
+        if event.button() != Qt.LeftButton or press_pos is None:
+            return
+        if (event.pos() - press_pos).manhattanLength() > CLICK_MOVE_TOLERANCE_PX:
+            return  # the user panned the view rather than picking a target
+        if self.bounds is None:
+            return
+        scene_pos = self.mapToScene(event.pos())
+        snap = self._snap_scene_pos(scene_pos) if self.snap_enabled else None
+        if snap is not None:
+            s, z = snap["s"], snap["z"]
+        else:
+            s, z = self.pixel_to_section(scene_pos.x(), scene_pos.y())
+        self.clickedSection.emit(float(s), float(z))
 
     def mouseMoveEvent(self, event):
         if self.bounds is not None:
@@ -515,6 +610,7 @@ class SectionReferenceCanvas(QGraphicsView):
         zoom_out = 1.0 / zoom_in
         factor = zoom_in if event.angleDelta().y() > 0 else zoom_out
         self.scale(factor, factor)
+        event.accept()
 
     def section_to_pixel(self, s, z):
         min_s, _max_s, _min_z, max_z = self.bounds
@@ -528,17 +624,17 @@ class SectionReferenceCanvas(QGraphicsView):
         z = max_z - ((float(y) - self.margin) / self.reference_scale)
         return s, z
 
-    def _compute_bounds(self):
+    def _compute_bounds(self, records, segments):
         s_values = []
         z_values = []
-        for record in self.records:
+        for record in records:
             if record.get("inside_buffer") is False:
                 continue
             if record.get("s") is None or record.get("z_section") is None:
                 continue
             s_values.append(float(record["s"]))
             z_values.append(float(record["z_section"]))
-        for segment in self.segments:
+        for segment in segments:
             for s_key, z_key in (("s0", "z0"), ("s1", "z1")):
                 if segment.get(s_key) is None or segment.get(z_key) is None:
                     continue
