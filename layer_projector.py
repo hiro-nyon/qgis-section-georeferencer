@@ -303,7 +303,7 @@ def _z_from_attributes(feature, layer, candidates):
     try:
         field_names = [field.name() for field in layer.fields()]
     except Exception:
-        return None
+        return None, None
     lower_to_name = {name.lower(): name for name in field_names}
     for candidate in candidates:
         field_name = candidate if candidate in field_names else lower_to_name.get(candidate.lower())
