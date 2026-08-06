@@ -10,6 +10,8 @@ import math
 
 
 SINGULAR_TOLERANCE = 1.0e-12
+DEFORMATION_STRETCH_WARNING_PERCENT = 20.0
+DEFORMATION_SHEAR_WARNING_DEGREES = 5.0
 
 
 def compute_section_basis(p0, p1):
@@ -108,18 +110,132 @@ def fit_affine_pixel_to_section(gcps):
         squared_distances.append(ds * ds + dz * dz)
 
     rms = math.sqrt(sum(squared_distances) / len(squared_distances))
+    pixel_to_section_coeffs = {
+        "s": [float(value) for value in coeff_s],
+        "z": [float(value) for value in coeff_z],
+    }
     return {
-        "pixel_to_section": {
-            "s": [float(value) for value in coeff_s],
-            "z": [float(value) for value in coeff_z],
-        },
+        "pixel_to_section": pixel_to_section_coeffs,
         "section_to_pixel": {
             "u": coeff_u,
             "v": coeff_v,
         },
         "residuals": residuals,
         "rms": float(rms),
+        "deformation": analyze_affine_deformation(pixel_to_section_coeffs),
     }
+
+
+def analyze_affine_deformation(pixel_to_section_coeffs):
+    """Return human-readable deformation metrics for an affine transform.
+
+    Absolute scale and rotation are recorded but are not considered harmful.
+    Warnings are based on the ratio of the principal stretches and on the
+    departure of the transformed image axes from a right angle.
+    """
+    try:
+        s_coeffs = pixel_to_section_coeffs["s"]
+        z_coeffs = pixel_to_section_coeffs["z"]
+        ds_du, ds_dv = float(s_coeffs[1]), float(s_coeffs[2])
+        dz_du, dz_dv = float(z_coeffs[1]), float(z_coeffs[2])
+    except (KeyError, IndexError, TypeError, ValueError) as exc:
+        raise ValueError("Invalid pixel-to-section affine coefficients.") from exc
+
+    scale_u = math.hypot(ds_du, dz_du)
+    scale_v = math.hypot(ds_dv, dz_dv)
+    determinant = ds_du * dz_dv - ds_dv * dz_du
+    if (
+        scale_u <= SINGULAR_TOLERANCE
+        or scale_v <= SINGULAR_TOLERANCE
+        or abs(determinant) <= SINGULAR_TOLERANCE
+    ):
+        raise ValueError("Affine transform is singular or nearly singular.")
+
+    axis_cosine = (ds_du * ds_dv + dz_du * dz_dv) / (scale_u * scale_v)
+    axis_cosine = max(-1.0, min(1.0, axis_cosine))
+    axis_angle = math.degrees(math.acos(axis_cosine))
+    signed_shear = 90.0 - axis_angle
+
+    # Singular values describe the maximum and minimum directional stretch
+    # independently of rotation and of the chosen image axes.
+    frobenius_squared = (
+        ds_du * ds_du + ds_dv * ds_dv + dz_du * dz_du + dz_dv * dz_dv
+    )
+    discriminant = max(
+        0.0, frobenius_squared * frobenius_squared - 4.0 * determinant * determinant
+    )
+    eigenvalue_max = 0.5 * (frobenius_squared + math.sqrt(discriminant))
+    eigenvalue_min = 0.5 * (frobenius_squared - math.sqrt(discriminant))
+    principal_scale_max = math.sqrt(max(0.0, eigenvalue_max))
+    principal_scale_min = math.sqrt(max(0.0, eigenvalue_min))
+    if principal_scale_min <= SINGULAR_TOLERANCE:
+        raise ValueError("Affine transform is singular or nearly singular.")
+
+    stretch_ratio = principal_scale_max / principal_scale_min
+    stretch_difference_percent = (stretch_ratio - 1.0) * 100.0
+    axis_scale_ratio = max(scale_u, scale_v) / min(scale_u, scale_v)
+    axis_scale_difference_percent = (axis_scale_ratio - 1.0) * 100.0
+    shear_degrees = abs(signed_shear)
+    rotation_degrees = math.degrees(math.atan2(dz_du, ds_du))
+
+    deformation = {
+        "scale_u_m_per_px": float(scale_u),
+        "scale_v_m_per_px": float(scale_v),
+        "axis_scale_difference_percent": float(axis_scale_difference_percent),
+        "principal_scale_max_m_per_px": float(principal_scale_max),
+        "principal_scale_min_m_per_px": float(principal_scale_min),
+        "stretch_ratio": float(stretch_ratio),
+        "stretch_difference_percent": float(stretch_difference_percent),
+        "axis_angle_degrees": float(axis_angle),
+        "signed_shear_degrees": float(signed_shear),
+        "shear_degrees": float(shear_degrees),
+        "rotation_degrees": float(rotation_degrees),
+        "area_scale_m2_per_px2": float(abs(determinant)),
+        "orientation": "preserved" if determinant > 0.0 else "flipped",
+        "warning_thresholds": {
+            "stretch_difference_percent": DEFORMATION_STRETCH_WARNING_PERCENT,
+            "shear_degrees": DEFORMATION_SHEAR_WARNING_DEGREES,
+        },
+    }
+    warnings = deformation_warnings(deformation)
+    deformation["warning"] = bool(warnings)
+    deformation["warnings"] = warnings
+    return deformation
+
+
+def deformation_warnings(deformation):
+    """Build warnings for deformation metrics using the recorded thresholds."""
+    if not isinstance(deformation, dict):
+        return []
+    thresholds = deformation.get("warning_thresholds") or {}
+    stretch_limit = float(
+        thresholds.get(
+            "stretch_difference_percent", DEFORMATION_STRETCH_WARNING_PERCENT
+        )
+    )
+    shear_limit = float(
+        thresholds.get("shear_degrees", DEFORMATION_SHEAR_WARNING_DEGREES)
+    )
+    warnings = []
+    try:
+        stretch = float(deformation["stretch_difference_percent"])
+        if stretch > stretch_limit:
+            warnings.append(
+                "directional stretch difference {:.1f}% exceeds {:.1f}%".format(
+                    stretch, stretch_limit
+                )
+            )
+    except (KeyError, TypeError, ValueError):
+        pass
+    try:
+        shear = float(deformation["shear_degrees"])
+        if shear > shear_limit:
+            warnings.append(
+                "shear {:.1f}° exceeds {:.1f}°".format(shear, shear_limit)
+            )
+    except (KeyError, TypeError, ValueError):
+        pass
+    return warnings
 
 
 def pixel_to_section(u, v, coeffs):

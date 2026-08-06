@@ -1,8 +1,17 @@
 import math
+import os
+import sys
 import unittest
 
-from section_georeferencer.transforms import (
+# The plugin directory is the repository root, and a clone can be named
+# anything, so import the pure-Python modules by path rather than assuming the
+# package is importable as `section_georeferencer`.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from transforms import (  # noqa: E402
+    analyze_affine_deformation,
     compute_section_basis,
+    deformation_warnings,
     fit_affine_pixel_to_section,
     pixel_to_section,
     section_to_pixel,
@@ -86,6 +95,49 @@ class TransformTests(unittest.TestCase):
         ]
         with self.assertRaises(ValueError):
             fit_affine_pixel_to_section(gcps)
+
+    def test_deformation_metrics_for_rigid_transform(self):
+        angle = math.radians(30.0)
+        deformation = analyze_affine_deformation(
+            {
+                "s": [5.0, math.cos(angle), -math.sin(angle)],
+                "z": [7.0, math.sin(angle), math.cos(angle)],
+            }
+        )
+        self.assertAlmostEqual(deformation["scale_u_m_per_px"], 1.0)
+        self.assertAlmostEqual(deformation["scale_v_m_per_px"], 1.0)
+        self.assertAlmostEqual(deformation["stretch_difference_percent"], 0.0)
+        self.assertAlmostEqual(deformation["shear_degrees"], 0.0)
+        self.assertAlmostEqual(deformation["rotation_degrees"], 30.0)
+        self.assertEqual(deformation_warnings(deformation), [])
+
+    def test_non_uniform_stretch_triggers_warning(self):
+        deformation = analyze_affine_deformation(
+            {"s": [0.0, 1.5, 0.0], "z": [0.0, 0.0, 1.0]}
+        )
+        self.assertAlmostEqual(deformation["stretch_difference_percent"], 50.0)
+        self.assertTrue(deformation["warning"])
+        self.assertIn("stretch", deformation["warnings"][0])
+
+    def test_shear_triggers_warning(self):
+        shear = math.tan(math.radians(10.0))
+        deformation = analyze_affine_deformation(
+            {"s": [0.0, 1.0, shear], "z": [0.0, 0.0, 1.0]}
+        )
+        self.assertAlmostEqual(deformation["shear_degrees"], 10.0)
+        self.assertTrue(any("shear" in warning for warning in deformation["warnings"]))
+
+    def test_fitted_transform_contains_deformation_record(self):
+        gcps = [
+            (0, 0, 0, 0),
+            (10, 0, 20, 0),
+            (0, 10, 0, 10),
+        ]
+        result = fit_affine_pixel_to_section(gcps)
+        self.assertIn("deformation", result)
+        self.assertAlmostEqual(
+            result["deformation"]["stretch_difference_percent"], 100.0
+        )
 
 
 if __name__ == "__main__":
