@@ -41,7 +41,7 @@ class SectionGeoreferencerPlugin:
             self.action = None
         if self.dock is not None:
             self.dock.cleanup()
-            self.iface.removeDockWidget(self.dock)
+            self.dock.hide()
             self.dock.deleteLater()
             self.dock = None
 
@@ -50,9 +50,32 @@ class SectionGeoreferencerPlugin:
             self.dock = SectionGeoreferencerDock(self.iface)
             self.dock.setWindowIcon(QIcon(_ICON_PATH))
             self.dock.visibilityChanged.connect(self._dock_visibility_changed)
-            self.iface.addDockWidget(Qt.RightDockWidgetArea, self.dock)
-        self.dock.setVisible(not self.dock.isVisible() if not checked else True)
-        self.dock.raise_()
+            self._configure_standalone_window()
+        visible = not self.dock.isVisible() if not checked else True
+        self.dock.setVisible(visible)
+        if visible:
+            self.dock.raise_()
+            self.dock.activateWindow()
+
+    def _configure_standalone_window(self):
+        """Keep the plugin in a separate, non-modal, always-visible window."""
+        self.dock.setWindowFlags(
+            Qt.Tool
+            | Qt.WindowTitleHint
+            | Qt.WindowSystemMenuHint
+            | Qt.WindowMinMaxButtonsHint
+            | Qt.WindowCloseButtonHint
+            | Qt.WindowStaysOnTopHint
+        )
+        self.dock.setAllowedAreas(Qt.NoDockWidgetArea)
+        self.dock.setWindowModality(Qt.NonModal)
+        self.dock.setAttribute(Qt.WA_DeleteOnClose, False)
+        # macOS normally hides utility windows when their application loses
+        # focus. Keep this window visible while working in another app.
+        mac_always_show = getattr(Qt, "WA_MacAlwaysShowToolWindow", None)
+        if mac_always_show is not None:
+            self.dock.setAttribute(mac_always_show, True)
+        self.dock.resize(1100, 760)
 
     def _dock_visibility_changed(self, visible):
         if self.action is not None:
