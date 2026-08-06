@@ -31,28 +31,39 @@ The plugin adds a toolbar/menu action named **Section Georeferencer**.
 
 ## Basic Workflow
 
+The dock walks through six numbered steps. Each step title shows `✓` and a short
+summary once it is satisfied, and a hint line under the status bar always names
+the next action.
+
 1. Install and enable the plugin.
 2. Load PLATEAU, GPS, or CAD-derived vector layers into QGIS.
 3. Open **Plugins > Section Georeferencer**.
-4. Define the section line from manual coordinates or a selected line feature.
-   P0 is the left end (`s=0`) and P1 is the right end (`s=section length`) of
-   the section-coordinate view. The map keeps endpoint labels and a P0→P1
-   arrow visible so the orientation can be checked.
-5. Select the target PLATEAU building feature and click **Load Selected
-   PLATEAU Reference**. The reference section appears in the dock.
-6. Load a scanned/paper CAD section drawing image that was already converted
-   from PDF or scan data to PNG, JPEG, or TIFF.
-7. For each GCP, click the CAD image to pick source pixel `(u, v)`, then click
-   the PLATEAU reference section to fill target `(s, z)`. The PLATEAU reference
-   view snaps to projected vertices, segment endpoints, and nearest points on
-   projected segments.
-8. Add at least 3 GCPs and click **Compute Transform**.
-9. Project an active GPS point layer or active PLATEAU/CAD vector layer.
-   If one PLATEAU building feature is selected in the active layer, only that
-   selected building is projected. If no feature is selected, the active vector
-   layer is processed.
-10. Export the overlaid section as PNG, or export a reproducible section
-   analysis package.
+4. **1. Section line** — define the line with **Draw on map** (two clicks on the
+   QGIS map canvas), **Manual** (the coordinate fields), or **From line** (a
+   selected line feature). P0 is the left end (`s=0`) and P1 is the right end
+   (`s=section length`) of the section-coordinate view. The map keeps these
+   endpoint labels and a P0→P1 arrow visible so the orientation can be checked.
+5. **2. PLATEAU reference** — select the target PLATEAU building feature in the
+   active QGIS layer and click **Load selected**. The reference section appears
+   in the right-hand panel.
+6. **3. Section image** — load the scanned/paper CAD section drawing
+   (PNG, JPEG, TIFF, or PDF).
+7. **4. GCP manager** — for each GCP, click the CAD image to pick source pixel
+   `(u, v)`, then click the PLATEAU reference to fill target `(s, z)`, then
+   click **Add GCP**. The reference view snaps to projected vertices, segment
+   endpoints, and nearest points on projected segments. Left-dragging either
+   panel pans it; only a click that does not move picks a coordinate.
+8. The affine transform is computed automatically as soon as 3 GCPs exist, and
+   again after every add or delete. **Compute transform** recomputes on demand.
+   The table shows the per-GCP residual so a mis-picked point is easy to spot,
+   and selecting a row rings that GCP on the image.
+9. **5. Layer projection** — project the active GPS point layer or the active
+   PLATEAU/CAD vector layer. If features are selected in the active layer, only
+   those are projected; otherwise the whole layer is processed. Projecting the
+   same layer again **replaces** its previous result rather than appending a
+   duplicate copy.
+10. **6. Export** — export the overlaid section as PNG, or export a reproducible
+   section analysis package.
 11. Save or load the JSON configuration as needed.
 
 ## Paper CAD / PLATEAU / GPS Handoff Model
@@ -134,6 +145,13 @@ The plugin can save and load a JSON config containing:
 - z field
 - GCPs
 - affine transform coefficients and RMS residual
+- CAD deformation metrics: horizontal/vertical scale, principal stretch
+  difference, shear, rotation, area scale, warning thresholds, and warnings
+
+The GCP manager displays these deformation metrics after fitting. A warning is
+shown when the maximum-to-minimum directional stretch differs by more than 20%
+or when affine shear moves the image axes more than 5 degrees away from a right
+angle. Rotation and uniform scaling are reported but do not trigger warnings.
 
 Image paths are stored relative to the config file when possible. Missing image
 paths produce a warning while preserving the rest of the loaded configuration.
@@ -143,7 +161,8 @@ paths produce a warning while preserving the rest of the loaded configuration.
 Use **Export Section Analysis Package** to create a named package folder that
 can be validated outside QGIS. Files inside the folder use the package name as
 a prefix, and the exact file names are recorded in `package_files` in the
-exported config. With the default legacy names, the package contains:
+exported config, so consumers should read that mapping instead of hardcoding
+names. With the default legacy names, the package contains:
 
 - `section_background.png`: the original section image without GPS overlay
 - `section_background_georeferenced.tif`: GeoTIFF version of the section
@@ -154,9 +173,20 @@ exported config. With the default legacy names, the package contains:
 - `gps_projected.csv`: every processed GPS point with section coordinates,
   pixel coordinates, raw z, z source, layer name, and `inside_buffer`
 - `plateau_projected.geojson`: projected PLATEAU/CAD vertices and simple
-  segments in section coordinates
-- `projection_summary.json`: processing counts and warnings
+  segments in section coordinates `(s, z_section)`, with pixel `u`/`v` kept as
+  feature properties
+- `world_projected.geojson`: the same GPS and PLATEAU records in project-CRS
+  world coordinates `[x, y, z_raw]`, for loading straight into QGIS or geopandas
+- `section_projected.gpkg`: GeoPackage with `gps`, `plateau`, and
+  `plateau_segments` layers in world coordinates (written only when the GDAL
+  Python bindings are available)
+- `projection_summary.json`: per-source-layer processing counts and warnings
 - `gcp_residuals.csv`: written when transform residuals are available
+
+`section_config.json` inside the package is not byte-identical to a config saved
+with **Save config**: its `image.path` points at the packaged background image
+and the original file name is kept in `image.source_name`, so the package stays
+self-contained and carries no absolute path from the exporting machine.
 
 The GeoTIFF uses the fitted affine transform as a raster GeoTransform:
 
@@ -186,7 +216,7 @@ features are also supported.
 An example QGIS-free validation script is included:
 
 ```bash
-python section_georeferencer/examples/validate_section_package.py /path/to/exported_package
+python examples/validate_section_package.py /path/to/exported_package
 ```
 
 It uses `pandas`, `numpy`, `matplotlib`, `pillow`, and `json` to load the
@@ -204,7 +234,9 @@ writes optional Gaussian mixture z-cluster centers.
 ## Limitations
 
 - Only affine pixel-to-section transforms are implemented.
-- Section drawing PDFs must be converted to image files before loading.
+- PDF loading depends on the GDAL PDF driver (Poppler or PDFium) shipped with
+  QGIS. The first page is rendered at up to 600 DPI; large sheets are rendered
+  at a reduced DPI so the raster stays under roughly 120 megapixels.
 - Strict 3D mesh-plane intersection is not implemented.
 - Vector projection uses vertices within the section buffer.
 - 2D polygon layers with a height attribute are drawn as a simple top-outline
@@ -217,20 +249,32 @@ writes optional Gaussian mixture z-cluster centers.
 
 ## Future Work
 
-- Direct PDF loading
+- Multi-page PDF selection
 - TPS or polynomial transforms
 - Strict 3D mesh section intersection
 - SVG/PDF export
 - BEMS/CAD zone support
 - Integration with the QGIS elevation profile panel
 
-## Transform Tests
+## Tests
 
-The pure transform logic does not import QGIS and can be tested with:
+`transforms.py`, `config_io.py`, and `package_exporter.py` do not import QGIS,
+so they run under a plain Python 3 interpreter. From the repository root:
 
 ```bash
-python -m unittest section_georeferencer.tests.test_transforms
+python -m unittest discover -s tests
 ```
 
-The QGIS UI and layer projection modules must be exercised inside QGIS because
-they depend on PyQGIS and Qt.
+`section_georeferencer_dock.py`, `section_canvas.py`, and `layer_projector.py`
+import PyQGIS and Qt, so they must be exercised inside QGIS.
+
+## License
+
+Not yet chosen. Note that a QGIS plugin links against PyQGIS, which is
+GPL-licensed, so distributing this plugin normally requires GPL-2.0-or-later.
+Add a `LICENSE` file and fill in `metadata.txt` before publishing.
+
+## Status
+
+Research MVP, marked `experimental=True` in `metadata.txt`. Interfaces and the
+package format may still change.

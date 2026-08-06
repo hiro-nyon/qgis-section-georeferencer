@@ -3,6 +3,8 @@ name=Section Georeferencer
 description=Georeference architectural section drawings and overlay projected 3D geospatial data.
 version=0.1.0
 qgisMinimumVersion=3.28
+; TODO before publishing: author, email, homepage, repository, tracker.
+; The QGIS plugin repository rejects submissions without repository and tracker.
 author=Research MVP
 email=
 category=Vector
