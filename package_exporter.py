@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import csv
 import json
 import os
@@ -77,7 +78,7 @@ def export_section_analysis_package(
 
     crs_auth_id = config.get("crs", "")
 
-    write_json(config_path, config)
+    write_json(config_path, localize_config_image_path(config, package_files))
     write_gps_csv(gps_path, gps_records)
     write_plateau_geojson(plateau_path, plateau_records, plateau_segments)
     write_world_geojson(world_path, gps_records, plateau_records, crs_auth_id)
@@ -111,6 +112,28 @@ def package_file_names(package_name=None, file_names=None):
             if key in names and value:
                 names[key] = _clean_file_name(value)
     return names
+
+
+def localize_config_image_path(config, package_files):
+    """Return a copy of the config whose image path is package-relative.
+
+    The in-memory config stores the absolute path of the section image on the
+    machine that ran the export. Writing that into the package would leak a
+    local path and break for anyone who receives the folder, so the exported
+    config points at the packaged background image instead and keeps only the
+    original file name for provenance.
+    """
+    localized = copy.deepcopy(config)
+    image = localized.get("image")
+    if not isinstance(image, dict):
+        return localized
+    source_path = image.get("path")
+    if source_path:
+        image["source_name"] = os.path.basename(str(source_path))
+    image["path"] = package_files.get(
+        "section_background", DEFAULT_PACKAGE_FILES["section_background"]
+    )
+    return localized
 
 
 def sanitize_package_name(name):
