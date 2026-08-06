@@ -47,7 +47,12 @@ from .package_exporter import (
     utc_timestamp,
 )
 from .section_canvas import SectionCanvas, SectionReferenceCanvas
-from .transforms import compute_section_basis, fit_affine_pixel_to_section
+from .transforms import (
+    analyze_affine_deformation,
+    compute_section_basis,
+    deformation_warnings,
+    fit_affine_pixel_to_section,
+)
 
 
 PLUGIN_NAME = "Section Georeferencer"
@@ -161,14 +166,11 @@ class SectionGeoreferencerDock(QDockWidget):
         self.current_pixel = None
         self.gcps = []
         self.transform_result = None
-        self.projected_records = []
-        self.projected_segments = []
-        self.gps_projected_records = []
-        self.plateau_projected_records = []
-        self.plateau_projected_segments = []
-        self.gps_summary = _empty_gps_summary()
-        self.plateau_summary = _empty_plateau_summary()
-        self.projection_warnings = []
+        # Projection results are keyed by source layer name so that projecting
+        # the same layer twice replaces its previous result instead of
+        # silently duplicating every record in the export.
+        self.gps_results = {}
+        self.plateau_results = {}
         self.reference_records = []
         self.reference_segments = []
         self.section_line_tool = None
@@ -205,6 +207,14 @@ class SectionGeoreferencerDock(QDockWidget):
             "background-color: palette(window);"
         )
         root_layout.addWidget(self.status_label)
+
+        self.hint_label = QLabel("")
+        self.hint_label.setWordWrap(True)
+        self.hint_label.setStyleSheet(
+            "padding: 4px 12px; font-size: 11px; color: palette(dark);"
+            "border-left: 3px solid palette(mid);"
+        )
+        root_layout.addWidget(self.hint_label)
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.setChildrenCollapsible(False)
@@ -458,10 +468,18 @@ class SectionGeoreferencerDock(QDockWidget):
         button_row.addWidget(clear_button)
         layout.addLayout(button_row)
 
-        self.gcp_table = QTableWidget(0, 4)
-        self.gcp_table.setHorizontalHeaderLabels(["u (px)", "v (px)", "s (m)", "z (m)"])
+        self.gcp_table = QTableWidget(0, 5)
+        self.gcp_table.setHorizontalHeaderLabels(
+            ["u (px)", "v (px)", "s (m)", "z (m)", "residual (m)"]
+        )
+        self.gcp_table.setToolTip(
+            "Select a row to highlight that GCP on the section image.\n"
+            "residual = distance between the target s/z and the value the "
+            "fitted transform predicts for the picked pixel."
+        )
         self.gcp_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.gcp_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.gcp_table.itemSelectionChanged.connect(self._on_gcp_selection_changed)
         self.gcp_table.verticalHeader().setVisible(False)
         self.gcp_table.setMinimumHeight(110)
         self.gcp_table.setMaximumHeight(160)
@@ -479,6 +497,16 @@ class SectionGeoreferencerDock(QDockWidget):
         transform_row.addWidget(self.rms_label)
         transform_row.addStretch()
         layout.addLayout(transform_row)
+        self.deformation_label = QLabel("CAD deformation: -")
+        self.deformation_label.setWordWrap(True)
+        self.deformation_label.setToolTip(
+            "Affine deformation of the CAD image. Scale and rotation are reported; "
+            "warnings use principal stretch difference (>20%) and shear (>5°)."
+        )
+        self.deformation_label.setStyleSheet(
+            "font-size: 11px; color: palette(dark); padding: 3px 6px;"
+        )
+        layout.addWidget(self.deformation_label)
         return self._gcp_group_box
 
     def _projection_group(self):
@@ -799,19 +827,57 @@ class SectionGeoreferencerDock(QDockWidget):
             "",
             "Images (*.png *.jpg *.jpeg *.tif *.tiff *.pdf)",
         )
-        if path:
-            self._load_image(path)
+        if not path:
+            return
+        replaces_state = self._image_replaces_state(path)
+        if replaces_state and not self._confirm_discarding_gcps():
+            return
+        self._load_image(path, clear_state=replaces_state)
 
-    def _load_image(self, path):
+    def _image_replaces_state(self, path):
+        """True when the new image invalidates the current GCPs and overlays."""
+        if self.image_path is None:
+            return False
+        if os.path.abspath(path) == os.path.abspath(self.image_path):
+            return False
+        return bool(self.gcps or self._has_projection())
+
+    def _confirm_discarding_gcps(self):
+        answer = QMessageBox.question(
+            self,
+            "Load section image",
+            (
+                "The current GCPs, transform, and projected overlay belong to the "
+                "image that is loaded now.\n\n"
+                "Load the new image and clear them?"
+            ),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        return answer == QMessageBox.Yes
+
+    def _load_image(self, path, clear_state=False):
         try:
             self.canvas.load_image(path)
         except ValueError as exc:
+            # Nothing has been discarded yet, so the previous session survives
+            # an unreadable file.
             self._warn(str(exc))
             return
+        if clear_state:
+            self.gcps = []
+            self.transform_result = None
+            self._reset_projection_state()
+            self._update_gcp_table()
+            self._update_transform_label()
         self.image_path = path
         self.current_pixel = None
         self.clicked_pixel_label.setText("Pixel: -")
+        # Loading an image rebuilds the scene from scratch, so every overlay
+        # has to be redrawn from the dock's state.
         self.canvas.draw_gcp_markers(self.gcps)
+        self._redraw_projected_overlays()
+        self._update_reference_overlay()
         self._update_image_info()
         self._update_workflow_state()
         self._info("Loaded image: {}".format(os.path.basename(path)))
@@ -821,9 +887,12 @@ class SectionGeoreferencerDock(QDockWidget):
         self.image_path = None
         self.current_pixel = None
         self.clicked_pixel_label.setText("Pixel: -")
+        # The scene is gone with the image; drop the overlays it was carrying
+        # so the step summary and the exported package cannot disagree with it.
+        self._reset_projection_state()
         self._update_image_info()
         self._update_workflow_state()
-        self._info("Image and overlays cleared.")
+        self._info("Image and projected overlays cleared. GCPs are kept.")
 
     def _on_canvas_clicked(self, u, v):
         self.current_pixel = (float(u), float(v))
@@ -866,6 +935,7 @@ class SectionGeoreferencerDock(QDockWidget):
         else:
             self.transform_result = None
             self._update_transform_label()
+            self._update_reference_overlay()
             self._update_workflow_state()
             self._info("GCP deleted ({} remaining).".format(len(self.gcps)))
 
@@ -885,15 +955,23 @@ class SectionGeoreferencerDock(QDockWidget):
         except (ImportError, ValueError) as exc:
             self.transform_result = None
             self._update_transform_label()
+            self._update_gcp_table()
             self._update_reference_overlay()
+            self._update_workflow_state()
             self._warn(str(exc))
             return
         self._update_transform_label()
+        self._update_gcp_table()
         self._update_reference_overlay()
         self._update_workflow_state()
-        self._info("Affine transform computed (RMS={:.4g}).".format(
-            self.transform_result.get("rms", 0.0)
-        ))
+        warnings = deformation_warnings(self.transform_result.get("deformation"))
+        message = "Affine transform computed (RMS={} m from {} GCPs).".format(
+            _rms_text(self.transform_result.get("rms")), len(self.gcps)
+        )
+        if warnings:
+            self._warn("{} CAD deformation warning: {}.".format(message, "; ".join(warnings)))
+        else:
+            self._info(message)
 
     def _project_active_point_layer(self):
         if not self._projection_prerequisites_ok():
@@ -913,18 +991,17 @@ class SectionGeoreferencerDock(QDockWidget):
             settings["buffer_width"],
             settings["z_field"],
         )
-        draw_records = result["draw_records"]
-        self.canvas.draw_projected_points(draw_records)
-        self.projected_records.extend(draw_records)
-        self.gps_projected_records.extend(result["records"])
-        _merge_summary(self.gps_summary, result["summary"])
-        self.projection_warnings.extend(result["warnings"])
+        layer_name = _layer_name(layer)
+        replaced = layer_name in self.gps_results
+        self.gps_results[layer_name] = result
+        self._redraw_projected_overlays()
         self._update_workflow_state()
         self._show_projection_result(
             result["summary"].get("processed", 0),
             result["summary"].get("inside_buffer", 0),
-            _gps_skipped_count(result["summary"]),
+            _skipped_count(result["summary"]),
             result["warnings"],
+            note=_replaced_note(replaced, layer_name),
         )
 
     def _project_active_vector_layer(self):
@@ -951,42 +1028,77 @@ class SectionGeoreferencerDock(QDockWidget):
             settings["z_field"],
             features=selected_features or None,
         )
-        draw_records = result["draw_records"]
-        draw_segments = result["draw_segments"]
-        self.canvas.draw_projected_vertices(draw_records)
-        self.canvas.draw_projected_segments(draw_segments)
-        self.projected_records.extend(draw_records)
-        self.projected_segments.extend(draw_segments)
-        self.plateau_projected_records.extend(result["records"])
-        self.plateau_projected_segments.extend(result["segments"])
-        _merge_summary(self.plateau_summary, result["summary"])
-        self.projection_warnings.extend(result["warnings"])
+        layer_name = _layer_name(layer)
         if selected_features:
-            self.projection_warnings.append(
+            result["warnings"].append(
                 "Projected {} selected PLATEAU/CAD feature(s) from layer {}.".format(
-                    len(selected_features), layer.name()
+                    len(selected_features), layer_name
                 )
             )
+        replaced = layer_name in self.plateau_results
+        self.plateau_results[layer_name] = result
+        self._redraw_projected_overlays()
         self._update_workflow_state()
         self._show_projection_result(
             result["summary"].get("processed_vertices", 0),
             result["summary"].get("inside_buffer_vertices", 0),
-            _plateau_skipped_count(result["summary"]),
+            _skipped_count(result["summary"]),
             result["warnings"],
+            note=_replaced_note(replaced, layer_name),
         )
 
     def _clear_projected_overlay(self):
-        self.canvas.clear_projected_overlays()
-        self.projected_records = []
-        self.projected_segments = []
-        self.gps_projected_records = []
-        self.plateau_projected_records = []
-        self.plateau_projected_segments = []
-        self.gps_summary = _empty_gps_summary()
-        self.plateau_summary = _empty_plateau_summary()
-        self.projection_warnings = []
+        self._reset_projection_state()
         self._update_workflow_state()
         self._info("Projected overlay cleared.")
+
+    def _reset_projection_state(self):
+        self.canvas.clear_projected_overlays()
+        self.gps_results = {}
+        self.plateau_results = {}
+
+    def _has_projection(self):
+        return bool(self.gps_results or self.plateau_results)
+
+    def _redraw_projected_overlays(self):
+        """Rebuild every projected overlay item from the stored results."""
+        self.canvas.clear_projected_overlays()
+        for result in self.gps_results.values():
+            self.canvas.draw_projected_points(result["draw_records"])
+        for result in self.plateau_results.values():
+            self.canvas.draw_projected_vertices(result["draw_records"])
+            self.canvas.draw_projected_segments(result["draw_segments"])
+
+    def _gps_records(self):
+        return [
+            record
+            for result in self.gps_results.values()
+            for record in result["records"]
+        ]
+
+    def _plateau_records(self):
+        return [
+            record
+            for result in self.plateau_results.values()
+            for record in result["records"]
+        ]
+
+    def _plateau_segments(self):
+        return [
+            segment
+            for result in self.plateau_results.values()
+            for segment in result["segments"]
+        ]
+
+    def _projection_warnings(self):
+        return _dedupe(
+            [
+                warning
+                for results in (self.gps_results, self.plateau_results)
+                for result in results.values()
+                for warning in result["warnings"]
+            ]
+        )
 
     def _save_config_dialog(self):
         path, _filter = QFileDialog.getSaveFileName(
@@ -1049,6 +1161,9 @@ class SectionGeoreferencerDock(QDockWidget):
         )
         if not output_dir:
             return
+        # A trailing separator would make basename() empty and the file-name
+        # prefix stop matching the folder the user named.
+        output_dir = output_dir.rstrip("/\\") or output_dir
         if os.path.isfile(output_dir):
             self._warn("A file already exists at the selected package path.")
             return
@@ -1098,9 +1213,9 @@ class SectionGeoreferencerDock(QDockWidget):
                 output_dir,
                 self.canvas,
                 package_config,
-                self.gps_projected_records,
-                self.plateau_projected_records,
-                self.plateau_projected_segments,
+                self._gps_records(),
+                self._plateau_records(),
+                self._plateau_segments(),
                 projection_summary,
                 gcp_residuals,
                 package_files,
@@ -1120,6 +1235,7 @@ class SectionGeoreferencerDock(QDockWidget):
                 "pixel_to_section": self.transform_result.get("pixel_to_section"),
                 "section_to_pixel": self.transform_result.get("section_to_pixel"),
                 "rms": self.transform_result.get("rms"),
+                "deformation": self.transform_result.get("deformation"),
             }
         return {
             "plugin": PLUGIN_NAME,
@@ -1148,13 +1264,22 @@ class SectionGeoreferencerDock(QDockWidget):
     def _build_projection_summary(self, export_timestamp):
         return {
             "export_timestamp": export_timestamp,
-            "gps": dict(self.gps_summary),
-            "plateau": dict(self.plateau_summary),
-            "warnings": _dedupe(self.projection_warnings),
+            "gps": _rebuild_summary(_empty_gps_summary(), self.gps_results),
+            "plateau": _rebuild_summary(_empty_plateau_summary(), self.plateau_results),
+            "source_layers": {
+                "gps": sorted(self.gps_results),
+                "plateau": sorted(self.plateau_results),
+            },
+            "warnings": self._projection_warnings(),
         }
 
     def _apply_config(self, data, config_path):
         load_warnings = []
+        # The config replaces the section line and the transform, so anything
+        # projected with the previous ones is no longer valid.
+        if self._has_projection():
+            load_warnings.append("Previously projected overlay was cleared.")
+        self._reset_projection_state()
         section = data.get("section") or {}
         p0 = section.get("p0")
         p1 = section.get("p1")
@@ -1166,8 +1291,10 @@ class SectionGeoreferencerDock(QDockWidget):
 
         height = data.get("height") or {}
         projection = data.get("projection") or {}
-        self.z_offset_edit.setText(str(height.get("z_offset", 0.0)))
-        self.buffer_width_edit.setText(str(projection.get("buffer_width_m", 10.0)))
+        self.z_offset_edit.setText(_number_text(height.get("z_offset"), 0.0))
+        self.buffer_width_edit.setText(
+            _number_text(projection.get("buffer_width_m"), 10.0)
+        )
         self.z_field_edit.setText(str(projection.get("z_field", "") or ""))
 
         self.gcps = []
@@ -1187,10 +1314,20 @@ class SectionGeoreferencerDock(QDockWidget):
 
         transform = data.get("transform")
         if isinstance(transform, dict) and transform.get("pixel_to_section") and transform.get("section_to_pixel"):
-            self.transform_result = transform
+            self.transform_result = dict(transform)
+            try:
+                self.transform_result["deformation"] = analyze_affine_deformation(
+                    self.transform_result["pixel_to_section"]
+                )
+            except ValueError as exc:
+                load_warnings.append("CAD deformation could not be measured: {}".format(exc))
         else:
             self.transform_result = None
         self._update_transform_label()
+        if self.transform_result is not None:
+            warnings = deformation_warnings(self.transform_result.get("deformation"))
+            if warnings:
+                load_warnings.append("CAD deformation warning: {}.".format("; ".join(warnings)))
 
         image_path = (data.get("image") or {}).get("path")
         self.image_path = None
@@ -1204,6 +1341,8 @@ class SectionGeoreferencerDock(QDockWidget):
                 load_warnings.append("Image path in config does not exist: {}".format(resolved))
         else:
             self.canvas.draw_gcp_markers(self.gcps)
+        self._update_reference_overlay()
+        self._update_workflow_state()
         if load_warnings:
             self._warn("Config loaded with warning: {}".format(" ".join(load_warnings)))
         else:
@@ -1255,10 +1394,14 @@ class SectionGeoreferencerDock(QDockWidget):
             "z_field": self.z_field_edit.text().strip() or None,
         }
 
-    def _show_projection_result(self, processed_count, inside_count, skipped_count, warnings):
+    def _show_projection_result(
+        self, processed_count, inside_count, skipped_count, warnings, note=None
+    ):
         message = "Processed {} item(s); inside buffer {}; skipped {}.".format(
             processed_count, inside_count, skipped_count
         )
+        if note:
+            message = "{} {}".format(note, message)
         if warnings:
             message += " " + " ".join(warnings[:3])
         if warnings or skipped_count:
@@ -1267,12 +1410,9 @@ class SectionGeoreferencerDock(QDockWidget):
             self._info(message)
 
     def _source_layer_names(self):
-        names = []
-        for record in self.gps_projected_records + self.plateau_projected_records:
-            name = record.get("layer_name")
-            if name and name not in names:
-                names.append(name)
-        return names
+        return _dedupe(
+            [name for name in list(self.gps_results) + list(self.plateau_results) if name]
+        )
 
     def _update_image_info(self):
         if self.image_path and self.canvas.has_image():
@@ -1319,9 +1459,10 @@ class SectionGeoreferencerDock(QDockWidget):
             self._image_group_box.setTitle("{} 3. Section image".format(_STEP_BULLET))
 
         if step3_ok:
-            rms = self.transform_result.get("rms", 0.0)
             self._gcp_group_box.setTitle(
-                "{} 4. GCP manager  [{} pts, RMS={:.4g}]".format(_STEP_DONE, n_gcps, rms)
+                "{} 4. GCP manager  [{} pts, RMS={}]".format(
+                    _STEP_DONE, n_gcps, _rms_text(self.transform_result.get("rms"))
+                )
             )
         elif n_gcps > 0:
             self._gcp_group_box.setTitle(
@@ -1330,8 +1471,8 @@ class SectionGeoreferencerDock(QDockWidget):
         else:
             self._gcp_group_box.setTitle("{} 4. GCP manager".format(_STEP_BULLET))
 
-        n_gps = len(self.gps_projected_records)
-        n_plateau = len(self.plateau_projected_records)
+        n_gps = len(self._gps_records())
+        n_plateau = len(self._plateau_records())
         if n_gps or n_plateau:
             parts = []
             if n_gps:
@@ -1344,15 +1485,71 @@ class SectionGeoreferencerDock(QDockWidget):
         else:
             self._projection_group_box.setTitle("{} 5. Layer projection".format(_STEP_BULLET))
 
+        self.hint_label.setText(
+            "Next: {}".format(
+                self._next_step_hint(step1_ok, step2_ok, step3_ok, has_ref, n_gcps)
+            )
+        )
+
+    def _next_step_hint(self, step1_ok, step2_ok, step3_ok, has_ref, n_gcps):
+        if not step1_ok:
+            return (
+                "define the section line — click 'Draw on map' and pick P0 and P1 "
+                "on the QGIS map canvas."
+            )
+        if not step2_ok:
+            return "load the scanned section drawing with 'Load image' in step 3."
+        if not has_ref:
+            return (
+                "select the target PLATEAU/CAD feature in the QGIS layer, then "
+                "click 'Load selected' in step 2 to get snap targets."
+            )
+        if not step3_ok:
+            return (
+                "add {} more GCP(s): click a point on the section image (left), "
+                "click the matching point on the PLATEAU reference (right), then "
+                "'Add GCP'. The transform is computed automatically at 3.".format(
+                    max(0, 3 - n_gcps)
+                )
+            )
+        if not self._has_projection():
+            return (
+                "activate a GPS or PLATEAU/CAD layer in the QGIS layer panel and "
+                "project it in step 5."
+            )
+        return "export the overlay PNG or the full analysis package in step 6."
+
     def _update_gcp_table(self):
+        residuals = []
+        if self.transform_result is not None:
+            residuals = self.transform_result.get("residuals") or []
         self.gcp_table.setRowCount(len(self.gcps))
         for row, gcp in enumerate(self.gcps):
-            values = [gcp["u"], gcp["v"], gcp["s"], gcp["z"]]
-            for column, value in enumerate(values):
-                item = QTableWidgetItem(_format_float(value))
+            cells = [
+                _format_float(gcp["u"]),
+                _format_float(gcp["v"]),
+                _format_float(gcp["s"]),
+                _format_float(gcp["z"]),
+                _residual_text(residuals, row),
+            ]
+            for column, text in enumerate(cells):
+                item = QTableWidgetItem(text)
                 item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                 self.gcp_table.setItem(row, column, item)
         self.gcp_table.resizeColumnsToContents()
+
+    def _on_gcp_selection_changed(self):
+        # Also reached while the table is being rebuilt, including during
+        # __init__ before any GCP exists.
+        if not self.gcps:
+            self.canvas.clear_highlight()
+            return
+        row = self.gcp_table.currentRow()
+        selection_model = self.gcp_table.selectionModel()
+        if 0 <= row < len(self.gcps) and selection_model is not None and selection_model.hasSelection():
+            self.canvas.highlight_gcp(self.gcps[row])
+        else:
+            self.canvas.clear_highlight()
 
     def _update_reference_overlay(self):
         overlay_check = getattr(self, "reference_overlay_check", None)
@@ -1374,13 +1571,39 @@ class SectionGeoreferencerDock(QDockWidget):
         if self.transform_result is None:
             self.rms_label.setText("RMS: -")
             self.rms_label.setStyleSheet("font-size: 11px; color: palette(dark);")
+            self.deformation_label.setText("CAD deformation: -")
+            self.deformation_label.setStyleSheet(
+                "font-size: 11px; color: palette(dark); padding: 3px 6px;"
+            )
         else:
-            rms = self.transform_result.get("rms", 0.0)
-            self.rms_label.setText("RMS: {:.4g}".format(rms))
+            self.rms_label.setText(
+                "RMS: {}".format(_rms_text(self.transform_result.get("rms")))
+            )
             self.rms_label.setStyleSheet(
                 "font-size: 11px; font-weight: bold; color: #0F6E56;"
                 "background-color: #E1F5EE; padding: 2px 6px; border-radius: 3px;"
             )
+            deformation = self.transform_result.get("deformation")
+            if deformation is None:
+                try:
+                    deformation = analyze_affine_deformation(
+                        self.transform_result["pixel_to_section"]
+                    )
+                    self.transform_result["deformation"] = deformation
+                except (KeyError, ValueError):
+                    deformation = None
+            self.deformation_label.setText(_deformation_text(deformation))
+            warnings = deformation_warnings(deformation)
+            if warnings:
+                self.deformation_label.setStyleSheet(
+                    "font-size: 11px; font-weight: bold; color: #854F0B;"
+                    "background-color: #FAEEDA; padding: 4px 6px; border-radius: 3px;"
+                )
+            else:
+                self.deformation_label.setStyleSheet(
+                    "font-size: 11px; color: #085041;"
+                    "background-color: #E1F5EE; padding: 4px 6px; border-radius: 3px;"
+                )
 
     def _update_section_labels(self):
         if self.section_length is None:
@@ -1469,6 +1692,58 @@ def _format_float(value):
         return "{:.12g}".format(float(value))
     except Exception:
         return str(value)
+
+
+def _number_text(value, default):
+    """Format a config number for a line edit, falling back on bad values."""
+    try:
+        return _format_float(float(value))
+    except (TypeError, ValueError):
+        return _format_float(default)
+
+
+def _residual_text(residuals, row):
+    """Per-GCP fit error, or '-' when no transform has been computed yet."""
+    if row >= len(residuals):
+        return "-"
+    residual = residuals[row]
+    try:
+        return "{:.4g}".format(
+            math.hypot(float(residual["ds"]), float(residual["dz"]))
+        )
+    except (KeyError, TypeError, ValueError):
+        return "-"
+
+
+def _rms_text(value):
+    try:
+        return "{:.4g}".format(float(value))
+    except (TypeError, ValueError):
+        return "n/a"
+
+
+def _deformation_text(deformation):
+    if not isinstance(deformation, dict):
+        return "CAD deformation: n/a"
+    try:
+        text = (
+            "CAD deformation: u={:.5g} m/px, v={:.5g} m/px | "
+            "stretch diff={:.1f}% | shear={:.1f}° | rotation={:.1f}° | "
+            "area={:.5g} m²/px²"
+        ).format(
+            float(deformation["scale_u_m_per_px"]),
+            float(deformation["scale_v_m_per_px"]),
+            float(deformation["stretch_difference_percent"]),
+            float(deformation["shear_degrees"]),
+            float(deformation["rotation_degrees"]),
+            float(deformation["area_scale_m2_per_px2"]),
+        )
+    except (KeyError, TypeError, ValueError):
+        return "CAD deformation: n/a"
+    warnings = deformation_warnings(deformation)
+    if warnings:
+        return "⚠ {} | {}".format(text, "; ".join(warnings))
+    return text
 
 
 def _float_or_default(text, default):
@@ -1801,6 +2076,32 @@ class SectionLineMapTool(QgsMapTool):
         self.fixed_line.addPoint(p1, True)
 
 
+def _rebuild_summary(empty, results):
+    """Sum per-layer summaries from scratch so counts match the exported rows."""
+    summary = dict(empty)
+    for result in results.values():
+        for key, value in result["summary"].items():
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                summary[key] = summary.get(key, 0) + value
+            else:
+                summary[key] = value
+    return summary
+
+
+def _layer_name(layer):
+    try:
+        return layer.name()
+    except Exception:
+        return ""
+
+
+def _replaced_note(replaced, layer_name):
+    """Replacing a layer's earlier projection is expected, not a warning."""
+    if not replaced:
+        return None
+    return "Replaced the previous projection of layer {}.".format(layer_name)
+
+
 def _empty_gps_summary():
     return {
         "processed": 0,
@@ -1823,23 +2124,7 @@ def _empty_plateau_summary():
     }
 
 
-def _merge_summary(target, update):
-    for key, value in update.items():
-        if isinstance(value, (int, float)):
-            target[key] = target.get(key, 0) + value
-        else:
-            target[key] = value
-
-
-def _gps_skipped_count(summary):
-    return (
-        summary.get("skipped_no_z", 0)
-        + summary.get("skipped_invalid_geometry", 0)
-        + summary.get("skipped_projection_error", 0)
-    )
-
-
-def _plateau_skipped_count(summary):
+def _skipped_count(summary):
     return (
         summary.get("skipped_no_z", 0)
         + summary.get("skipped_invalid_geometry", 0)
