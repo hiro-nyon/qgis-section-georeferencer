@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 
 from qgis.PyQt.QtCore import Qt
@@ -172,7 +173,14 @@ class SectionGeoreferencerDock(QDockWidget):
         self.reference_segments = []
         self.section_line_tool = None
         self.previous_map_tool = None
+        self.orientation_guide = None
         self._build_ui()
+        try:
+            self.orientation_guide = SectionOrientationGuide(self.iface.mapCanvas())
+        except Exception:
+            # The rest of the dock remains usable in unusual/headless QGIS
+            # setups where no map canvas is available.
+            self.orientation_guide = None
         self._update_crs_labels()
         self._update_section_labels()
         self._update_gcp_table()
@@ -315,7 +323,7 @@ class SectionGeoreferencerDock(QDockWidget):
         p0_row.setSpacing(6)
         self.x0_edit = QLineEdit()
         self.y0_edit = QLineEdit()
-        p0_label = QLabel("P0")
+        p0_label = QLabel("P0 / LEFT")
         p0_label.setStyleSheet("font-weight: bold; font-size: 11px; color: palette(dark); min-width: 20px;")
         p0_row.addWidget(p0_label)
         for lbl, widget in [("x", self.x0_edit), ("y", self.y0_edit)]:
@@ -334,7 +342,7 @@ class SectionGeoreferencerDock(QDockWidget):
         p1_row.setSpacing(6)
         self.x1_edit = QLineEdit()
         self.y1_edit = QLineEdit()
-        p1_label = QLabel("P1")
+        p1_label = QLabel("P1 / RIGHT")
         p1_label.setStyleSheet("font-weight: bold; font-size: 11px; color: palette(dark); min-width: 20px;")
         p1_row.addWidget(p1_label)
         for lbl, widget in [("x", self.x1_edit), ("y", self.y1_edit)]:
@@ -352,7 +360,9 @@ class SectionGeoreferencerDock(QDockWidget):
         button_row = QHBoxLayout()
         button_row.setSpacing(4)
         draw_button = QPushButton("Draw on map")
-        draw_button.setToolTip("Click two points on the QGIS map canvas to define the section line")
+        draw_button.setToolTip(
+            "Click the section drawing's left endpoint (P0), then its right endpoint (P1)"
+        )
         draw_button.clicked.connect(self._start_section_line_map_tool)
         manual_button = QPushButton("Manual")
         manual_button.setToolTip("Set section line from the coordinate fields above")
@@ -578,7 +588,10 @@ class SectionGeoreferencerDock(QDockWidget):
             self._cancel_drawn_section_line,
         )
         canvas.setMapTool(self.section_line_tool)
-        self._info("Click P0 on the map, then move the cursor and click P1. Snapping follows QGIS snapping settings.")
+        self._info(
+            "Click the endpoint that should appear on the LEFT of the section drawing "
+            "(P0), then click the RIGHT endpoint (P1). Snapping follows QGIS settings."
+        )
 
     def _finish_drawn_section_line(self, p0, p1):
         try:
@@ -595,7 +608,10 @@ class SectionGeoreferencerDock(QDockWidget):
             pass
         self.section_line_tool = None
         self.previous_map_tool = None
-        self._info("Section line set from map XY clicks.")
+        self._info(
+            "Section line set. P0 is the LEFT end and P1 is the RIGHT end of "
+            "the section-coordinate view."
+        )
 
     def _cancel_drawn_section_line(self):
         try:
@@ -743,8 +759,38 @@ class SectionGeoreferencerDock(QDockWidget):
         self.y0_edit.setText(_format_float(self.section_p0[1]))
         self.x1_edit.setText(_format_float(self.section_p1[0]))
         self.y1_edit.setText(_format_float(self.section_p1[1]))
+        if self.orientation_guide is not None:
+            self.orientation_guide.set_section(self.section_p0, self.section_p1)
         self._update_section_labels()
-        self._info("Section line set.")
+        self._info(
+            "Section line set. P0 = section LEFT; P1 = section RIGHT."
+        )
+
+    def set_orientation_guide_visible(self, visible):
+        """Show the map guide only while this plugin's dock is visible."""
+        if self.orientation_guide is not None:
+            self.orientation_guide.set_visible(visible)
+
+    def cleanup(self):
+        """Remove map-canvas items owned by this dock before plugin unload."""
+        if self.section_line_tool is not None:
+            tool = self.section_line_tool
+            self.section_line_tool = None
+            try:
+                canvas = self.iface.mapCanvas()
+                if self.previous_map_tool is not None:
+                    canvas.setMapTool(self.previous_map_tool)
+                else:
+                    tool.cleanup()
+            except Exception:
+                try:
+                    tool.cleanup()
+                except Exception:
+                    pass
+            self.previous_map_tool = None
+        if self.orientation_guide is not None:
+            self.orientation_guide.dispose()
+            self.orientation_guide = None
 
     def _load_image_dialog(self):
         path, _filter = QFileDialog.getOpenFileName(
@@ -1430,6 +1476,206 @@ def _float_or_default(text, default):
         return float(str(text).strip())
     except ValueError:
         return default
+
+
+class SectionOrientationGuide:
+    """Show which map endpoint becomes each end of the section-coordinate view."""
+
+    _LINE_COLOR = QColor(74, 78, 165, 235)
+    _P0_COLOR = QColor(25, 113, 194, 235)
+    _P1_COLOR = QColor(217, 95, 14, 235)
+
+    def __init__(self, canvas):
+        self.canvas = canvas
+        self.p0 = None
+        self.p1 = None
+        self.visible = True
+        self._disposed = False
+
+        self.line_halo = self._rubber_band(QColor(255, 255, 255, 220), 7)
+        self.line = self._rubber_band(self._LINE_COLOR, 4)
+        self.arrow = self._rubber_band(self._LINE_COLOR, 4)
+        self.p0_leader = self._rubber_band(self._P0_COLOR, 3, Qt.DashLine)
+        self.p1_leader = self._rubber_band(self._P1_COLOR, 3, Qt.DashLine)
+
+        self.start_marker = self._marker(QgsVertexMarker.ICON_BOX, self._P0_COLOR)
+        self.end_marker = self._marker(QgsVertexMarker.ICON_CIRCLE, self._P1_COLOR)
+
+        self.start_label = self._label(
+            "断面左  P0  (s=0)", "white", "rgba(25, 113, 194, 235)"
+        )
+        self.end_label = self._label(
+            "断面右  P1  (s=L)", "white", "rgba(217, 95, 14, 235)"
+        )
+
+        self._bands = (
+            self.line_halo,
+            self.line,
+            self.arrow,
+            self.p0_leader,
+            self.p1_leader,
+        )
+        self._markers = (self.start_marker, self.end_marker)
+        self._labels = (self.start_label, self.end_label)
+        self._signals = []
+        for signal_name in (
+            "extentsChanged",
+            "rotationChanged",
+            "destinationCrsChanged",
+            "mapCanvasRefreshed",
+        ):
+            signal = getattr(canvas, signal_name, None)
+            if signal is None:
+                continue
+            try:
+                signal.connect(self._redraw)
+                self._signals.append(signal)
+            except Exception:
+                pass
+        self._apply_visibility(False)
+
+    def _rubber_band(self, color, width, line_style=None):
+        band = QgsRubberBand(self.canvas, QgsWkbTypes.LineGeometry)
+        band.setColor(color)
+        band.setWidth(width)
+        if line_style is not None:
+            try:
+                band.setLineStyle(line_style)
+            except Exception:
+                pass
+        return band
+
+    def _marker(self, icon_type, color):
+        marker = QgsVertexMarker(self.canvas)
+        marker.setIconType(icon_type)
+        marker.setIconSize(13)
+        marker.setPenWidth(3)
+        marker.setColor(color)
+        return marker
+
+    def _label(self, text, foreground, background):
+        label = QLabel(text, self.canvas)
+        label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        label.setStyleSheet(
+            "QLabel {{ color: {}; background-color: {}; border: 1px solid {}; "
+            "border-radius: 4px; padding: 3px 6px; font-size: 11px; "
+            "font-weight: bold; }}".format(foreground, background, foreground)
+        )
+        label.setToolTip(
+            "P0 is s=0 at the section view's left end; P1 is s=L at its right end"
+        )
+        label.adjustSize()
+        return label
+
+    def set_section(self, p0, p1):
+        self.p0 = QgsPointXY(float(p0[0]), float(p0[1]))
+        self.p1 = QgsPointXY(float(p1[0]), float(p1[1]))
+        self._redraw()
+
+    def set_visible(self, visible):
+        self.visible = bool(visible)
+        self._redraw()
+
+    def _redraw(self, *_args):
+        if self._disposed or self.p0 is None or self.p1 is None:
+            self._apply_visibility(False)
+            return
+
+        dx = self.p1.x() - self.p0.x()
+        dy = self.p1.y() - self.p0.y()
+        length = math.hypot(dx, dy)
+        if length <= 0.0:
+            self._apply_visibility(False)
+            return
+        ux, uy = dx / length, dy / length
+        left_x, left_y = -uy, ux
+        map_units_per_pixel = self.canvas.mapSettings().mapUnitsPerPixel()
+
+        arrow_back = min(22.0 * map_units_per_pixel, length * 0.28)
+        arrow_half_width = min(10.0 * map_units_per_pixel, length * 0.13)
+        arrow_base_x = self.p1.x() - ux * arrow_back
+        arrow_base_y = self.p1.y() - uy * arrow_back
+        arrow_left = QgsPointXY(
+            arrow_base_x + left_x * arrow_half_width,
+            arrow_base_y + left_y * arrow_half_width,
+        )
+        arrow_right = QgsPointXY(
+            arrow_base_x - left_x * arrow_half_width,
+            arrow_base_y - left_y * arrow_half_width,
+        )
+
+        self._set_line(self.line_halo, self.p0, self.p1)
+        self._set_line(self.line, self.p0, self.p1)
+        self._set_polyline(self.arrow, (arrow_left, self.p1, arrow_right))
+        self.start_marker.setCenter(self.p0)
+        self.end_marker.setCenter(self.p1)
+
+        along_offset = 24.0 * map_units_per_pixel
+        side_offset = 18.0 * map_units_per_pixel
+        start_anchor = QgsPointXY(
+            self.p0.x() - ux * along_offset + left_x * side_offset,
+            self.p0.y() - uy * along_offset + left_y * side_offset,
+        )
+        end_anchor = QgsPointXY(
+            self.p1.x() + ux * along_offset + left_x * side_offset,
+            self.p1.y() + uy * along_offset + left_y * side_offset,
+        )
+        self._set_line(self.p0_leader, self.p0, start_anchor)
+        self._set_line(self.p1_leader, self.p1, end_anchor)
+        self._place_label(self.start_label, start_anchor)
+        self._place_label(self.end_label, end_anchor)
+        self._apply_visibility(self.visible)
+
+    def _set_line(self, band, p0, p1):
+        self._set_polyline(band, (p0, p1))
+
+    @staticmethod
+    def _set_polyline(band, points):
+        band.reset(QgsWkbTypes.LineGeometry)
+        last = len(points) - 1
+        for index, point in enumerate(points):
+            band.addPoint(point, index == last)
+
+    def _place_label(self, label, map_point):
+        pixel = self.canvas.mapSettings().mapToPixel().transform(map_point)
+        label.adjustSize()
+        label.move(
+            int(round(pixel.x() - label.width() / 2.0)),
+            int(round(pixel.y() - label.height() / 2.0)),
+        )
+        label.raise_()
+
+    def _apply_visibility(self, visible):
+        for item in getattr(self, "_bands", ()) + getattr(self, "_markers", ()):
+            try:
+                item.setVisible(bool(visible))
+            except Exception:
+                pass
+        for label in getattr(self, "_labels", ()):
+            label.setVisible(bool(visible))
+
+    def dispose(self):
+        if self._disposed:
+            return
+        self._disposed = True
+        for signal in self._signals:
+            try:
+                signal.disconnect(self._redraw)
+            except Exception:
+                pass
+        self._signals = []
+        for item in self._bands + self._markers:
+            try:
+                self.canvas.scene().removeItem(item)
+            except Exception:
+                pass
+        for label in self._labels:
+            label.hide()
+            label.deleteLater()
+        try:
+            self.canvas.refresh()
+        except Exception:
+            pass
 
 
 class SectionLineMapTool(QgsMapTool):

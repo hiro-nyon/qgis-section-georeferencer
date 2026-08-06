@@ -40,6 +40,7 @@ class SectionGeoreferencerPlugin:
             self.action.deleteLater()
             self.action = None
         if self.dock is not None:
+            self.dock.cleanup()
             self.iface.removeDockWidget(self.dock)
             self.dock.deleteLater()
             self.dock = None
@@ -56,3 +57,5 @@ class SectionGeoreferencerPlugin:
     def _dock_visibility_changed(self, visible):
         if self.action is not None:
             self.action.setChecked(bool(visible))
+        if self.dock is not None:
+            self.dock.set_orientation_guide_visible(visible)

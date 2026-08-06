@@ -35,6 +35,9 @@ The plugin adds a toolbar/menu action named **Section Georeferencer**.
 2. Load PLATEAU, GPS, or CAD-derived vector layers into QGIS.
 3. Open **Plugins > Section Georeferencer**.
 4. Define the section line from manual coordinates or a selected line feature.
+   P0 is the left end (`s=0`) and P1 is the right end (`s=section length`) of
+   the section-coordinate view. The map keeps endpoint labels and a P0→P1
+   arrow visible so the orientation can be checked.
 5. Select the target PLATEAU building feature and click **Load Selected
    PLATEAU Reference**. The reference section appears in the dock.
 6. Load a scanned/paper CAD section drawing image that was already converted
@@ -62,7 +65,9 @@ The intended handoff is:
 4. Define a section line in the QGIS XY map canvas by clicking two points, or
    use manual/selected-line input. The map drawing tool shows a crosshair
    marker, previews a dashed line from P0 to the cursor, and follows QGIS
-   snapping settings when snapping is enabled.
+   snapping settings when snapping is enabled. After the second point, a
+   persistent P0→P1 arrow and color-coded endpoint labels show that P0 becomes
+   the section view's left end and P1 becomes its right end.
 5. Load the selected PLATEAU building as the reference
    section in the plugin.
 6. Load the scanned CAD section drawing as the section background image.
