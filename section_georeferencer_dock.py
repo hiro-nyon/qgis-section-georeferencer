@@ -30,6 +30,7 @@ from qgis.PyQt.QtWidgets import (
 )
 from qgis.core import (
     Qgis,
+    QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
     QgsPointXY,
     QgsProject,
@@ -162,6 +163,13 @@ class SectionGeoreferencerDock(QDockWidget):
         self.section_p0 = None
         self.section_p1 = None
         self.section_length = None
+        # authid of the project CRS the section line coordinates are in.
+        self.section_crs = None
+        # z offset / buffer / height field that the PLATEAU reference, GCP
+        # heights, and projected results were made with. Exports must not
+        # describe those results with values the user typed afterwards.
+        self.applied_settings = None
+        self._reconciling_settings = False
         self.image_path = None
         self.current_pixel = None
         self.gcps = []
@@ -543,12 +551,17 @@ class SectionGeoreferencerDock(QDockWidget):
         self.z_field_edit = QLineEdit()
         self.z_field_edit.setPlaceholderText("auto-detect")
         self.z_field_edit.setToolTip(
-            "Attribute field name for height (e.g. measuredHeight).\n"
+            "Attribute field name for height (e.g. floor_h, measuredHeight).\n"
+            "Point layers: this field overrides geometry Z.\n"
+            "Line/polygon layers: geometry Z is kept; the field is used only\n"
+            "where the geometry has no Z.\n"
             "Leave empty to use geometry Z or auto-detect."
         )
         z_field_col.addWidget(z_field_label)
         z_field_col.addWidget(self.z_field_edit)
         layout.addLayout(z_field_col)
+        for edit in (self.z_offset_edit, self.buffer_width_edit, self.z_field_edit):
+            edit.editingFinished.connect(self._on_projection_setting_edited)
 
         button_row = QHBoxLayout()
         button_row.setSpacing(4)
@@ -604,6 +617,8 @@ class SectionGeoreferencerDock(QDockWidget):
         return group
 
     def _start_section_line_map_tool(self):
+        if not self._project_crs_usable():
+            return
         try:
             canvas = self.iface.mapCanvas()
         except Exception:
@@ -622,24 +637,32 @@ class SectionGeoreferencerDock(QDockWidget):
         )
 
     def _finish_drawn_section_line(self, p0, p1):
+        error = None
+        applied = False
         try:
-            self._set_section((p0.x(), p0.y()), (p1.x(), p1.y()))
+            applied = self._set_section((p0.x(), p0.y()), (p1.x(), p1.y()))
             self._update_workflow_state()
         except ValueError as exc:
-            self._warn(str(exc))
-            return
+            error = str(exc)
+        # The tool has already removed its rubber bands, so it is restored in
+        # every outcome; otherwise later map clicks re-fire the same result.
         try:
             canvas = self.iface.mapCanvas()
             if self.previous_map_tool is not None:
                 canvas.setMapTool(self.previous_map_tool)
+            else:
+                canvas.unsetMapTool(self.section_line_tool)
         except Exception:
             pass
         self.section_line_tool = None
         self.previous_map_tool = None
-        self._info(
-            "Section line set. P0 is the LEFT end and P1 is the RIGHT end of "
-            "the section-coordinate view."
-        )
+        if error is not None:
+            self._warn(error)
+        elif applied:
+            self._info(
+                "Section line set. P0 is the LEFT end and P1 is the RIGHT end of "
+                "the section-coordinate view."
+            )
 
     def _cancel_drawn_section_line(self):
         try:
@@ -662,10 +685,13 @@ class SectionGeoreferencerDock(QDockWidget):
                 self._float_from_edit(self.x1_edit, "x1"),
                 self._float_from_edit(self.y1_edit, "y1"),
             )
-            self._set_section(p0, p1)
+            applied = self._set_section(p0, p1)
             self._update_workflow_state()
         except ValueError as exc:
             self._warn(str(exc))
+            return
+        if not applied:
+            self._show_section_in_edits()
 
     def _use_selected_line(self):
         layer = self.iface.activeLayer()
@@ -700,7 +726,9 @@ class SectionGeoreferencerDock(QDockWidget):
         if self.section_p0 is None or self.section_p1 is None:
             self._warn("Define the section line before loading a PLATEAU reference.")
             return
-        settings = self._projection_settings()
+        if not self._section_crs_ok():
+            return
+        settings = self._settings_for_use()
         if settings is None:
             return
         layer = self.iface.activeLayer()
@@ -739,6 +767,7 @@ class SectionGeoreferencerDock(QDockWidget):
             return
         self.reference_records = result["draw_records"]
         self.reference_segments = result["draw_segments"]
+        self.applied_settings = dict(settings)
         self.reference_info_label.setText(
             "Loaded {} selected feature(s), {} vertices inside buffer. Move near a vertex/segment to snap, then click to fill target s/z.".format(
                 len(selected_features),
@@ -753,6 +782,11 @@ class SectionGeoreferencerDock(QDockWidget):
             self._info("PLATEAU reference section loaded.")
 
     def _clear_plateau_reference(self):
+        self._reset_reference_state()
+        self._update_workflow_state()
+        self._info("PLATEAU reference cleared.")
+
+    def _reset_reference_state(self):
         self.reference_canvas.clear_reference()
         self.reference_records = []
         self.reference_segments = []
@@ -760,8 +794,6 @@ class SectionGeoreferencerDock(QDockWidget):
         self.reference_info_label.setText(
             "Select a PLATEAU building feature, then load as snap target for GCPs."
         )
-        self._update_workflow_state()
-        self._info("PLATEAU reference cleared.")
 
     def _on_reference_clicked(self, s, z):
         self.gcp_s_edit.setText(_format_float(s))
@@ -778,21 +810,96 @@ class SectionGeoreferencerDock(QDockWidget):
     def _set_reference_overlay_enabled(self, _state):
         self._update_reference_overlay()
 
-    def _set_section(self, p0, p1):
+    def _set_section(self, p0, p1, confirm=True, crs_authid=None):
+        """Set the section line; return False if the user kept the old one.
+
+        Every s value (PLATEAU reference, GCP targets, transform, projected
+        results) is measured along the current line, so a different line
+        discards them after confirmation instead of mixing two lines in one
+        export. Raises ValueError for a zero-length line or an unusable CRS.
+        """
         _direction, _perp, length = compute_section_basis(p0, p1)
-        self.section_p0 = (float(p0[0]), float(p0[1]))
-        self.section_p1 = (float(p1[0]), float(p1[1]))
+        if crs_authid is None:
+            crs = QgsProject.instance().crs()
+            problem = _geographic_crs_problem(crs)
+            if problem:
+                raise ValueError(problem)
+            crs_authid = crs.authid()
+        new_p0 = (float(p0[0]), float(p0[1]))
+        new_p1 = (float(p1[0]), float(p1[1]))
+        changes_line = not (
+            crs_authid == self.section_crs
+            and _same_xy(new_p0, self.section_p0)
+            and _same_xy(new_p1, self.section_p1)
+        )
+        if not changes_line:
+            # The edits show 12 significant digits; re-applying them must not
+            # count as a new line or replace the full-precision coordinates.
+            new_p0, new_p1 = self.section_p0, self.section_p1
+        if changes_line and self._has_section_dependents():
+            if confirm and not self._confirm(
+                "Change section line",
+                "The PLATEAU reference, GCP targets, transform, and projected "
+                "overlay were measured along the current section line.\n\n"
+                "Use the new line and clear them?",
+            ):
+                self._info("Section line unchanged.")
+                return False
+            self._clear_section_dependents()
+        self.section_p0 = new_p0
+        self.section_p1 = new_p1
         self.section_length = float(length)
-        self.x0_edit.setText(_format_float(self.section_p0[0]))
-        self.y0_edit.setText(_format_float(self.section_p0[1]))
-        self.x1_edit.setText(_format_float(self.section_p1[0]))
-        self.y1_edit.setText(_format_float(self.section_p1[1]))
+        self.section_crs = crs_authid
+        self._show_section_in_edits()
         if self.orientation_guide is not None:
             self.orientation_guide.set_section(self.section_p0, self.section_p1)
         self._update_section_labels()
         self._info(
             "Section line set. P0 = section LEFT; P1 = section RIGHT."
         )
+        return True
+
+    def _clear_section(self):
+        self.section_p0 = None
+        self.section_p1 = None
+        self.section_length = None
+        self.section_crs = None
+        for edit in (self.x0_edit, self.y0_edit, self.x1_edit, self.y1_edit):
+            edit.clear()
+        if self.orientation_guide is not None:
+            self.orientation_guide.clear()
+        self._update_section_labels()
+
+    def _show_section_in_edits(self):
+        if self.section_p0 is None or self.section_p1 is None:
+            return
+        self.x0_edit.setText(_format_float(self.section_p0[0]))
+        self.y0_edit.setText(_format_float(self.section_p0[1]))
+        self.x1_edit.setText(_format_float(self.section_p1[0]))
+        self.y1_edit.setText(_format_float(self.section_p1[1]))
+
+    def _has_section_dependents(self):
+        return bool(
+            self.reference_records
+            or self.reference_segments
+            or self.gcps
+            or self.transform_result is not None
+            or self._has_projection()
+        )
+
+    def _clear_section_dependents(self):
+        self._reset_reference_state()
+        self._reset_projection_state()
+        self._reset_gcp_state()
+        self.applied_settings = None
+
+    def _reset_gcp_state(self):
+        self.gcps = []
+        self.transform_result = None
+        self.canvas.clear_gcp_markers()
+        self.canvas.clear_reference_overlay()
+        self._update_gcp_table()
+        self._update_transform_label()
 
     def set_orientation_guide_visible(self, visible):
         """Show the map guide only while this plugin's dock is visible."""
@@ -843,18 +950,12 @@ class SectionGeoreferencerDock(QDockWidget):
         return bool(self.gcps or self._has_projection())
 
     def _confirm_discarding_gcps(self):
-        answer = QMessageBox.question(
-            self,
+        return self._confirm(
             "Load section image",
-            (
-                "The current GCPs, transform, and projected overlay belong to the "
-                "image that is loaded now.\n\n"
-                "Load the new image and clear them?"
-            ),
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
+            "The current GCPs, transform, and projected overlay belong to the "
+            "image that is loaded now.\n\n"
+            "Load the new image and clear them?",
         )
-        return answer == QMessageBox.Yes
 
     def _load_image(self, path, clear_state=False):
         try:
@@ -910,8 +1011,12 @@ class SectionGeoreferencerDock(QDockWidget):
         except ValueError as exc:
             self._warn(str(exc))
             return
+        settings = self._settings_for_use()
+        if settings is None:
+            return
         u, v = self.current_pixel
         self.gcps.append({"u": u, "v": v, "s": s, "z": z})
+        self.applied_settings = dict(settings)
         self._update_gcp_table()
         self.canvas.draw_gcp_markers(self.gcps)
         if len(self.gcps) >= 3:
@@ -940,12 +1045,7 @@ class SectionGeoreferencerDock(QDockWidget):
             self._info("GCP deleted ({} remaining).".format(len(self.gcps)))
 
     def _clear_gcps(self):
-        self.gcps = []
-        self.transform_result = None
-        self._update_gcp_table()
-        self.canvas.clear_gcp_markers()
-        self.canvas.clear_reference_overlay()
-        self._update_transform_label()
+        self._reset_gcp_state()
         self._update_workflow_state()
         self._info("GCPs cleared.")
 
@@ -976,7 +1076,7 @@ class SectionGeoreferencerDock(QDockWidget):
     def _project_active_point_layer(self):
         if not self._projection_prerequisites_ok():
             return
-        settings = self._projection_settings()
+        settings = self._settings_for_use()
         if settings is None:
             return
         layer = self.iface.activeLayer()
@@ -994,6 +1094,7 @@ class SectionGeoreferencerDock(QDockWidget):
         layer_name = _layer_name(layer)
         replaced = layer_name in self.gps_results
         self.gps_results[layer_name] = result
+        self.applied_settings = dict(settings)
         self._redraw_projected_overlays()
         self._update_workflow_state()
         self._show_projection_result(
@@ -1007,7 +1108,7 @@ class SectionGeoreferencerDock(QDockWidget):
     def _project_active_vector_layer(self):
         if not self._projection_prerequisites_ok():
             return
-        settings = self._projection_settings()
+        settings = self._settings_for_use()
         if settings is None:
             return
         layer = self.iface.activeLayer()
@@ -1037,6 +1138,7 @@ class SectionGeoreferencerDock(QDockWidget):
             )
         replaced = layer_name in self.plateau_results
         self.plateau_results[layer_name] = result
+        self.applied_settings = dict(settings)
         self._redraw_projected_overlays()
         self._update_workflow_state()
         self._show_projection_result(
@@ -1108,6 +1210,8 @@ class SectionGeoreferencerDock(QDockWidget):
             return
         if not path.lower().endswith(".json"):
             path += ".json"
+        if self._settings_for_use() is None:
+            return
         config = self._build_config()
         try:
             config_io.save_config(path, config)
@@ -1152,6 +1256,8 @@ class SectionGeoreferencerDock(QDockWidget):
 
     def _export_section_analysis_package_dialog(self):
         if not self._package_prerequisites_ok():
+            return
+        if self._settings_for_use() is None:
             return
         default_name = sanitize_package_name(
             "section_package_{}".format(utc_timestamp())
@@ -1240,7 +1346,7 @@ class SectionGeoreferencerDock(QDockWidget):
         return {
             "plugin": PLUGIN_NAME,
             "version": PLUGIN_VERSION,
-            "crs": crs.authid() if crs.isValid() else "",
+            "crs": self.section_crs or (crs.authid() if crs.isValid() else ""),
             "section": {
                 "p0": list(self.section_p0) if self.section_p0 else None,
                 "p1": list(self.section_p1) if self.section_p1 else None,
@@ -1275,19 +1381,54 @@ class SectionGeoreferencerDock(QDockWidget):
 
     def _apply_config(self, data, config_path):
         load_warnings = []
-        # The config replaces the section line and the transform, so anything
-        # projected with the previous ones is no longer valid.
+        # The config replaces the section line, the settings, the GCPs, and
+        # the transform, so the PLATEAU reference and anything projected in
+        # the previous session no longer belong to it.
         if self._has_projection():
             load_warnings.append("Previously projected overlay was cleared.")
-        self._reset_projection_state()
+        if self.reference_records or self.reference_segments:
+            load_warnings.append("Previous PLATEAU reference was cleared.")
+        self._clear_section_dependents()
+        self._clear_section()
         section = data.get("section") or {}
         p0 = section.get("p0")
         p1 = section.get("p1")
-        if p0 and p1:
+        project_authid = QgsProject.instance().crs().authid()
+        config_authid = str(data.get("crs") or "").strip() or None
+        config_geographic = bool(config_authid) and bool(
+            _geographic_crs_problem(QgsCoordinateReferenceSystem(config_authid))
+        )
+        if p0 and p1 and config_geographic:
+            # Earlier versions recommended EPSG:6697; such a line and the GCP
+            # targets measured along it are in degrees and cannot be reused.
+            load_warnings.append(
+                "The config was saved in the geographic CRS {}, so its section "
+                "line and GCP targets are in degrees and were not restored. "
+                "Set a projected CRS such as JGD2011 / Japan Plane Rectangular "
+                "CS (EPSG:6669-6687), redefine the section line, and pick the "
+                "GCPs again.".format(config_authid)
+            )
+        elif p0 and p1:
             try:
-                self._set_section((p0[0], p0[1]), (p1[0], p1[1]))
+                if config_authid and config_authid != project_authid:
+                    # Keep the line in the CRS it was saved in; the CRS guard
+                    # then blocks use until the project CRS matches again.
+                    self._set_section(
+                        (p0[0], p0[1]), (p1[0], p1[1]), confirm=False,
+                        crs_authid=config_authid,
+                    )
+                    load_warnings.append(
+                        "The config section line is in {} but the project CRS "
+                        "is {}. Set the project CRS to {} before using it.".format(
+                            config_authid, project_authid or "unset", config_authid
+                        )
+                    )
+                else:
+                    self._set_section((p0[0], p0[1]), (p1[0], p1[1]), confirm=False)
             except Exception as exc:
-                self._warn("Config section could not be restored: {}".format(exc))
+                load_warnings.append(
+                    "Config section could not be restored: {}".format(exc)
+                )
 
         height = data.get("height") or {}
         projection = data.get("projection") or {}
@@ -1298,7 +1439,7 @@ class SectionGeoreferencerDock(QDockWidget):
         self.z_field_edit.setText(str(projection.get("z_field", "") or ""))
 
         self.gcps = []
-        for gcp in data.get("gcps") or []:
+        for gcp in [] if config_geographic else data.get("gcps") or []:
             try:
                 self.gcps.append(
                     {
@@ -1310,9 +1451,12 @@ class SectionGeoreferencerDock(QDockWidget):
                 )
             except Exception:
                 continue
-        self._update_gcp_table()
+        # The GCP heights were picked with the config's z offset.
+        self.applied_settings = (
+            self._projection_settings(report=False) if self.gcps else None
+        )
 
-        transform = data.get("transform")
+        transform = None if config_geographic else data.get("transform")
         if isinstance(transform, dict) and transform.get("pixel_to_section") and transform.get("section_to_pixel"):
             self.transform_result = dict(transform)
             try:
@@ -1324,6 +1468,7 @@ class SectionGeoreferencerDock(QDockWidget):
         else:
             self.transform_result = None
         self._update_transform_label()
+        self._update_gcp_table()
         if self.transform_result is not None:
             warnings = deformation_warnings(self.transform_result.get("deformation"))
             if warnings:
@@ -1352,6 +1497,8 @@ class SectionGeoreferencerDock(QDockWidget):
         if self.section_p0 is None or self.section_p1 is None:
             self._warn("Define a section line before projecting layers.")
             return False
+        if not self._section_crs_ok():
+            return False
         if not self.canvas.has_image():
             self._warn("Load a section image before projecting layers.")
             return False
@@ -1368,6 +1515,8 @@ class SectionGeoreferencerDock(QDockWidget):
         if self.section_p0 is None or self.section_p1 is None:
             self._warn("Define a section line before exporting a package.")
             return False
+        if not self._section_crs_ok():
+            return False
         if not self.canvas.has_image():
             self._warn("Load a section image before exporting a package.")
             return False
@@ -1376,23 +1525,139 @@ class SectionGeoreferencerDock(QDockWidget):
             return False
         return True
 
-    def _projection_settings(self):
+    def _projection_settings(self, report=True):
         try:
             z_offset = self._float_from_edit(self.z_offset_edit, "z_offset")
             buffer_width = self._float_from_edit(
                 self.buffer_width_edit, "buffer width"
             )
+            if not (math.isfinite(z_offset) and math.isfinite(buffer_width)):
+                raise ValueError("z_offset and buffer width must be finite numbers.")
         except ValueError as exc:
-            self._warn(str(exc))
+            if report:
+                self._warn(str(exc))
             return None
         if buffer_width < 0:
-            self._warn("Buffer width must be zero or positive.")
+            if report:
+                self._warn("Buffer width must be zero or positive.")
             return None
         return {
             "z_offset": z_offset,
             "buffer_width": buffer_width,
             "z_field": self.z_field_edit.text().strip() or None,
         }
+
+    def _settings_for_use(self):
+        """Current projection settings, reconciled with existing results.
+
+        Returns None when the settings are invalid or when the user chose to
+        keep the results made with the previous settings (the edits are then
+        restored to those settings).
+        """
+        settings = self._projection_settings()
+        if settings is None:
+            return None
+        if self._reconcile_settings(settings):
+            return settings
+        return None
+
+    def _on_projection_setting_edited(self):
+        if self._reconciling_settings:
+            return
+        settings = self._projection_settings(report=False)
+        if settings is not None:
+            self._reconcile_settings(settings)
+
+    def _reconcile_settings(self, settings):
+        applied = self.applied_settings
+        if applied is None or self._reconciling_settings:
+            return True
+        changed = [key for key in applied if applied.get(key) != settings.get(key)]
+        if not changed:
+            return True
+        has_reference = bool(self.reference_records or self.reference_segments)
+        # z_section = z - z_offset, so a new offset also moves every GCP
+        # height; the buffer and height field only change which vertices and
+        # heights the reference and the projections pick up.
+        clears_gcps = "z_offset" in changed and bool(
+            self.gcps or self.transform_result is not None
+        )
+        cleared = []
+        if has_reference:
+            cleared.append("the PLATEAU reference")
+        if clears_gcps:
+            cleared.append("the GCPs and transform")
+        if self._has_projection():
+            cleared.append("the projected overlay")
+        if not cleared:
+            self.applied_settings = dict(settings) if self.gcps else None
+            return True
+        names = {
+            "z_offset": "z offset",
+            "buffer_width": "buffer",
+            "z_field": "height field",
+        }
+        self._reconciling_settings = True
+        try:
+            accepted = self._confirm(
+                "Change projection settings",
+                "The {} changed. {} {} made with the previous value.\n\n"
+                "Apply the new value and clear {}?".format(
+                    " and ".join(names[key] for key in changed),
+                    _capitalize(_join_words(cleared)),
+                    "was" if len(cleared) == 1 else "were",
+                    _join_words(cleared),
+                ),
+            )
+            if not accepted:
+                self._show_settings_in_edits(applied)
+                self._info("Kept the previous projection settings.")
+                return False
+            if has_reference:
+                self._reset_reference_state()
+            if clears_gcps:
+                self._reset_gcp_state()
+            self._reset_projection_state()
+        finally:
+            self._reconciling_settings = False
+        self.applied_settings = dict(settings) if self.gcps else None
+        self._update_workflow_state()
+        self._info("Projection settings changed; {} cleared.".format(_join_words(cleared)))
+        return True
+
+    def _show_settings_in_edits(self, settings):
+        self.z_offset_edit.setText(_format_float(settings["z_offset"]))
+        self.buffer_width_edit.setText(_format_float(settings["buffer_width"]))
+        self.z_field_edit.setText(settings.get("z_field") or "")
+
+    def _project_crs_usable(self):
+        problem = _geographic_crs_problem(QgsProject.instance().crs())
+        if problem:
+            self._warn(problem)
+            return False
+        return True
+
+    def _section_crs_ok(self):
+        """The section line is only meaningful in the CRS it was drawn in."""
+        if not self._project_crs_usable():
+            return False
+        current = QgsProject.instance().crs().authid()
+        if self.section_crs and current != self.section_crs:
+            self._warn(
+                "The project CRS changed from {} to {} after the section line "
+                "was defined. Switch the project CRS back to {} or redefine "
+                "the section line.".format(
+                    self.section_crs, current or "unset", self.section_crs
+                )
+            )
+            return False
+        return True
+
+    def _confirm(self, title, text):
+        answer = QMessageBox.question(
+            self, title, text, QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        return answer == QMessageBox.Yes
 
     def _show_projection_result(
         self, processed_count, inside_count, skipped_count, warnings, note=None
@@ -1624,10 +1889,14 @@ class SectionGeoreferencerDock(QDockWidget):
         self.crs_warning_label.setText(warning)
 
     def _project_crs_warning(self, crs):
-        if not crs.isValid():
-            return "Project CRS is invalid; section distance and buffer behavior may be incorrect."
-        if crs.isGeographic():
-            return "Project CRS is geographic/non-metric. Use a projected CRS for metric section length and buffer width."
+        problem = _geographic_crs_problem(crs)
+        if problem:
+            return problem
+        if self.section_crs and crs.authid() != self.section_crs:
+            return (
+                "The section line was defined in {}; switch the project CRS "
+                "back or redefine the line.".format(self.section_crs)
+            )
         try:
             if crs.mapUnits() != QgsUnitTypes.DistanceMeters:
                 return "Project CRS map units are not meters. Buffer width may not be metric."
@@ -1679,6 +1948,48 @@ class SectionGeoreferencerDock(QDockWidget):
         except Exception:
             if level == Qgis.Critical:
                 QMessageBox.critical(self, PLUGIN_NAME, message)
+
+
+def _geographic_crs_problem(crs):
+    """Why a CRS cannot carry section coordinates, or "" if it can.
+
+    s, d, and the buffer are planar distances in CRS units while z is in
+    metres. In a geographic CRS (EPSG:6697, JGD2011 + height, included) they
+    would be degrees.
+    """
+    if not crs.isValid():
+        return (
+            "The project CRS is not set. Set a projected metric CRS such as "
+            "JGD2011 / Japan Plane Rectangular CS (EPSG:6669-6687)."
+        )
+    if crs.isGeographic():
+        return (
+            "The project CRS {} is geographic, so section distance and buffer "
+            "would be in degrees. Set a projected metric CRS such as "
+            "JGD2011 / Japan Plane Rectangular CS (EPSG:6669-6687).".format(
+                crs.authid() or crs.description()
+            )
+        )
+    return ""
+
+
+def _same_xy(a, b):
+    if a is None or b is None:
+        return a is b
+    return all(
+        math.isclose(float(u), float(v), rel_tol=1e-11, abs_tol=1e-6)
+        for u, v in zip(a, b)
+    )
+
+
+def _join_words(items):
+    if len(items) <= 1:
+        return "".join(items)
+    return "{} and {}".format(", ".join(items[:-1]), items[-1])
+
+
+def _capitalize(text):
+    return text[:1].upper() + text[1:]
 
 
 def _primary_button(text):
@@ -1845,6 +2156,11 @@ class SectionOrientationGuide:
     def set_section(self, p0, p1):
         self.p0 = QgsPointXY(float(p0[0]), float(p0[1]))
         self.p1 = QgsPointXY(float(p1[0]), float(p1[1]))
+        self._redraw()
+
+    def clear(self):
+        self.p0 = None
+        self.p1 = None
         self._redraw()
 
     def set_visible(self, visible):

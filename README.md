@@ -70,7 +70,9 @@ the next action.
 
 The intended handoff is:
 
-1. In QGIS, prepare the project CRS, for example EPSG:6697.
+1. In QGIS, set a projected metric project CRS, for example JGD2011 / Japan
+   Plane Rectangular CS IX (EPSG:6677) for Tokyo. EPSG:6697 is geographic and
+   is refused (see CRS Assumptions).
 2. Load the PLATEAU layer into QGIS with normal QGIS tools.
 3. Select the relevant PLATEAU building feature in QGIS.
 4. Define a section line in the QGIS XY map canvas by clicking two points, or
@@ -105,13 +107,27 @@ When a source layer CRS differs from the project CRS, the plugin transforms
 feature x/y coordinates into the project CRS before computing section
 coordinates.
 
-Use a projected metric CRS whenever possible. If the project CRS is geographic
-or uses non-meter units, section length and buffer width may not be metric. The
-plugin warns about this but does not crash.
+The project CRS must be projected. Section distance `s`, perpendicular distance
+`d`, and the buffer are planar distances in CRS units while `z` is in metres, so
+a geographic CRS would make them degrees. The plugin refuses to define a section
+line, load a PLATEAU reference, project, or export while the project CRS is
+geographic. A projected CRS whose units are not metres only produces a warning.
 
-For workflows where GPS and PLATEAU layers are prepared in EPSG:6697, set the
-QGIS project CRS to EPSG:6697 before defining the section line and exporting the
-package. The exported `gps_projected.csv` stores `x`/`y` after transformation
+PLATEAU data is distributed in EPSG:6697 (JGD2011 geographic + JGD2011 height),
+which is geographic. Keep the layers in EPSG:6697 if you like, but set the
+project CRS to the matching JGD2011 / Japan Plane Rectangular CS zone
+(EPSG:6669-6687, for example EPSG:6677 for zone IX, Tokyo). Layer x/y are
+transformed into the project CRS; heights are used as stored.
+
+The section line is tied to the project CRS it was defined in. If the project
+CRS changes afterwards, projection and export are blocked until the CRS is
+switched back or the line is redefined. A config whose `crs` differs from the
+project CRS loads with a warning and is blocked the same way. A config saved in
+a geographic CRS (for example EPSG:6697 with earlier versions) loads its image
+and settings only: its section line and GCP targets are in degrees, so the line
+has to be redefined and the GCPs picked again.
+
+The exported `gps_projected.csv` stores `x`/`y` after transformation
 into the QGIS project CRS, and also stores ready-to-plot section-image pixel
 coordinates `u`/`v`. External Python validation normally uses `u`/`v` directly
 to draw on `section_background.png`; it does not need QGIS or PyQGIS.
@@ -128,9 +144,25 @@ Set `z_offset` in the dock if the source data height datum needs to be shifted
 to match the section drawing. The user is responsible for height datum
 alignment.
 
-For z extraction, geometry Z is preferred. If geometry Z is missing, the plugin
-uses the user-specified z field, then common fields such as `z`, `height`,
-`altitude`, `elevation`, `measuredHeight`, and `bldg_measuredHeight`.
+For z extraction of point layers (GPS), a height field typed in **Height
+field** wins over geometry Z, because naming one means the geometry Z is not the
+wanted height (GPS points stored as PointZ with z=0 are common). For line and
+polygon layers (PLATEAU/CAD), geometry Z always wins and the named field only
+fills in geometry without Z; otherwise a per-building value such as
+`measuredHeight` would flatten a 3D building to one height. Features where the
+field is empty, and layers that do not have it, fall back to geometry Z; a
+missing field is reported as a warning. After those, common fields such as `z`,
+`height`, `altitude`, `elevation`, `measuredHeight`, and `bldg_measuredHeight`
+are tried.
+The `z_source` column records which one was used for each record.
+
+The section line, z offset, buffer, and height field are fixed once results
+depend on them. Changing the section line asks before clearing the PLATEAU
+reference, GCPs, transform, and projected overlay. Changing the z offset asks
+before clearing the reference, the GCPs and transform (their heights move with
+the offset), and the overlay; changing the buffer or height field asks before
+clearing the reference and the overlay. Declining keeps the previous value, so
+an exported config always describes the settings its rows were made with.
 
 ## Config JSON
 
@@ -171,12 +203,20 @@ names. With the default legacy names, the package contains:
 - `section_config.json`: CRS, section line, buffer, z offset, image size, GCPs,
   affine transforms, RMS residual, source layer names, and export timestamp
 - `gps_projected.csv`: every processed GPS point with section coordinates,
-  pixel coordinates, raw z, z source, layer name, and `inside_buffer`
+  pixel coordinates, raw z, z source, layer name, `inside_buffer`, and every
+  attribute of the source layer (an attribute named like a computed column,
+  such as `x` or `s`, is written as `src_x`, `src_s`). Empty attributes are
+  empty cells. Dates and times are ISO 8601 and keep exactly the time-zone
+  information they had in QGIS: a naive observation time such as TRIMA
+  `recordedat` (JST) stays naive and is not shifted
 - `plateau_projected.geojson`: projected PLATEAU/CAD vertices and simple
   segments in section coordinates `(s, z_section)`, with pixel `u`/`v` kept as
   feature properties
 - `world_projected.geojson`: the same GPS and PLATEAU records in project-CRS
-  world coordinates `[x, y, z_raw]`, for loading straight into QGIS or geopandas
+  world coordinates `[x, y, z_raw]`, for loading straight into QGIS or geopandas.
+  The project CRS is declared in the GeoJSON `crs` member (for example
+  `urn:ogc:def:crs:EPSG::6677`), which GDAL, QGIS, and geopandas honour; plain
+  RFC 7946 readers that ignore it would assume WGS84
 - `section_projected.gpkg`: GeoPackage with `gps`, `plateau`, and
   `plateau_segments` layers in world coordinates (written only when the GDAL
   Python bindings are available)
@@ -245,7 +285,9 @@ writes optional Gaussian mixture z-cluster centers.
 - Buffer width assumes a metric projected CRS.
 - Styling is intentionally simple for MVP output figures.
 - PLATEAU/CAD package export stores projected vertices and simple segment
-  features; it does not export exact mesh-section intersection curves.
+  features; it does not export exact mesh-section intersection curves. A
+  segment joins two consecutive vertices of the same ring only, never the end
+  of one part, face, or ring to the start of the next.
 
 ## Future Work
 
@@ -266,7 +308,13 @@ python -m unittest discover -s tests
 ```
 
 `section_georeferencer_dock.py`, `section_canvas.py`, and `layer_projector.py`
-import PyQGIS and Qt, so they must be exercised inside QGIS.
+import PyQGIS and Qt. Their tests (`test_layer_projector.py`,
+`test_dock_state.py`) are skipped under plain Python and run headless with the
+Python that ships with QGIS, for example on macOS:
+
+```bash
+PYTHONHOME=/Applications/QGIS.app/Contents/Frameworks QT_QPA_PLATFORM=offscreen /Applications/QGIS.app/Contents/MacOS/python3.12 -m unittest discover -s tests
+```
 
 ## License
 

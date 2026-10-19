@@ -9,8 +9,10 @@ from qgis.core import (
     QgsCoordinateTransformContext,
     QgsPointXY,
     QgsProject,
+    QgsVertexId,
     QgsWkbTypes,
 )
+from qgis.PyQt.QtCore import QDate, QDateTime, Qt, QTime
 
 from .transforms import section_to_pixel, world_to_section
 
@@ -22,15 +24,6 @@ DEFAULT_Z_FIELDS = (
     "elevation",
     "measuredHeight",
     "bldg_measuredHeight",
-)
-
-GPS_PRESERVE_FIELDS = (
-    "timestamp",
-    "user_id",
-    "device_id",
-    "accuracy",
-    "speed",
-    "stay_flag",
 )
 
 PLATEAU_PRESERVE_FIELDS = (
@@ -56,11 +49,14 @@ def project_point_layer(
     z_offset=0.0,
     buffer_width=10.0,
     z_field=None,
+    features=None,
 ):
     """Project point layer features into section image pixels.
 
     Returns all points that have a usable z value, including points outside the
     section buffer. Callers should draw only records with inside_buffer=True.
+    Every source attribute is carried into the record (GPS observation times
+    such as TRIMA ``recordedat`` included) so that exports keep them.
     """
     warnings = []
     records = []
@@ -77,10 +73,14 @@ def project_point_layer(
         return _point_result(records, summary, ["Active layer is not a point layer."])
 
     transformer = _coordinate_transform(layer, project_crs, warnings)
-    z_candidates = _z_candidates(z_field)
     layer_name = _layer_name(layer)
+    field_names = _field_names(layer)
+    z_lookup = _z_lookup(
+        z_field, field_names, layer_name, warnings, overrides_geometry_z=True
+    )
+    feature_iterable = features if features is not None else layer.getFeatures()
 
-    for feature in layer.getFeatures():
+    for feature in feature_iterable:
         geometry = feature.geometry()
         if geometry is None or geometry.isEmpty():
             summary["skipped_invalid_geometry"] += 1
@@ -91,7 +91,7 @@ def project_point_layer(
             continue
         for point in points:
             summary["processed"] += 1
-            z, z_source = _z_from_point_or_attributes(point, feature, layer, z_candidates)
+            z, z_source = _z_value(point, feature, z_lookup)
             if z is None:
                 summary["skipped_no_z"] += 1
                 continue
@@ -121,7 +121,7 @@ def project_point_layer(
                 "z_source": z_source,
                 "layer_name": layer_name,
             }
-            record.update(_selected_attributes(feature, layer, GPS_PRESERVE_FIELDS))
+            record.update(_all_attributes(feature, field_names, record))
             records.append(record)
     return _point_result(records, summary, _dedupe(warnings))
 
@@ -162,8 +162,20 @@ def project_vector_layer_vertices(
         return _vector_result(records, segments, summary, ["Unsupported geometry type."])
 
     transformer = _coordinate_transform(layer, project_crs, warnings)
-    z_candidates = _z_candidates(z_field)
     layer_name = _layer_name(layer)
+    field_names = _field_names(layer)
+    # A 3D building keeps its geometry Z even with a height field named: a
+    # per-feature value such as measuredHeight would flatten every vertex.
+    z_lookup = _z_lookup(
+        z_field,
+        field_names,
+        layer_name,
+        warnings,
+        overrides_geometry_z=geometry_type == QgsWkbTypes.PointGeometry,
+    )
+    # Points of a multipoint are not connected, so only lines and polygons
+    # produce segments.
+    draws_segments = geometry_type != QgsWkbTypes.PointGeometry
     feature_iterable = features if features is not None else layer.getFeatures()
 
     for feature in feature_iterable:
@@ -173,10 +185,17 @@ def project_vector_layer_vertices(
             summary["skipped_invalid_geometry"] += 1
             continue
         last_record = None
+        last_ring = None
         geometry_type_name = QgsWkbTypes.displayString(geometry.wkbType())
-        for vertex_index, point in enumerate(geometry.vertices()):
+        for vertex_index, ring, point in _vertices_with_ring(geometry):
+            # A segment may only join consecutive vertices of the same ring.
+            # Bridging the end of one part/face/ring to the start of the next
+            # draws edges that do not exist in the source geometry.
+            if ring != last_ring:
+                last_record = None
+                last_ring = ring
             summary["processed_vertices"] += 1
-            z, z_source = _z_from_point_or_attributes(point, feature, layer, z_candidates)
+            z, z_source = _z_value(point, feature, z_lookup)
             if z is None:
                 summary["skipped_no_z"] += 1
                 last_record = None
@@ -211,9 +230,16 @@ def project_vector_layer_vertices(
                 "layer_name": layer_name,
                 "vertex_index": vertex_index,
             }
-            record.update(_selected_attributes(feature, layer, PLATEAU_PRESERVE_FIELDS))
+            record.update(
+                _selected_attributes(feature, field_names, PLATEAU_PRESERVE_FIELDS)
+            )
             records.append(record)
-            if inside_buffer and last_record is not None and last_record.get("inside_buffer"):
+            if (
+                draws_segments
+                and inside_buffer
+                and last_record is not None
+                and last_record.get("inside_buffer")
+            ):
                 segments.append(
                     {
                         "source_fid": feature.id(),
@@ -265,19 +291,88 @@ def _transform_xy(x, y, transformer):
     return float(point.x()), float(point.y())
 
 
-def _z_candidates(user_field):
-    candidates = []
-    if user_field:
-        candidates.append(str(user_field).strip())
-    candidates.extend(DEFAULT_Z_FIELDS)
-    return [field for field in candidates if field]
+def _vertices_with_ring(geometry):
+    """Yield (vertex_index, (part, ring), point) for every vertex.
+
+    The (part, ring) key changes whenever iteration moves to another part of a
+    multi-geometry, another face of a polyhedral surface, or another polygon
+    ring, which is where consecutive vertices stop being connected.
+    """
+    abstract = geometry.constGet()
+    vertex_id = QgsVertexId()
+    index = 0
+    while True:
+        found, point = abstract.nextVertex(vertex_id)
+        if not found:
+            return
+        yield index, (vertex_id.part, vertex_id.ring), point
+        index += 1
 
 
-def _z_from_point_or_attributes(point, feature, layer, candidates):
+def _field_names(layer):
+    try:
+        return [field.name() for field in layer.fields()]
+    except Exception:
+        return []
+
+
+def _resolve_field(name, field_names):
+    if name in field_names:
+        return name
+    lowered = name.lower()
+    for field_name in field_names:
+        if field_name.lower() == lowered:
+            return field_name
+    return None
+
+
+def _z_lookup(user_field, field_names, layer_name, warnings, overrides_geometry_z):
+    """Resolve where heights come from, once per layer.
+
+    For point layers an explicitly named height field takes precedence over
+    geometry Z: the user named it because the geometry Z is not the height
+    they want (GPS points stored as PointZ with z=0 are common). For lines and
+    polygons geometry Z wins and the named field fills in 2D geometry. The
+    common height field names are the last fallback.
+    """
+    explicit = None
+    requested = str(user_field or "").strip()
+    if requested:
+        explicit = _resolve_field(requested, field_names)
+        if explicit is None:
+            warnings.append(
+                "Height field '{}' is not in layer {}; used geometry Z or an "
+                "auto-detected height field instead.".format(requested, layer_name)
+            )
+    defaults = []
+    for candidate in DEFAULT_Z_FIELDS:
+        resolved = _resolve_field(candidate, field_names)
+        if resolved and resolved != explicit and resolved not in defaults:
+            defaults.append(resolved)
+    return {
+        "explicit": explicit,
+        "explicit_first": bool(overrides_geometry_z),
+        "defaults": defaults,
+    }
+
+
+def _z_value(point, feature, z_lookup):
+    explicit = z_lookup["explicit"]
+    if explicit and z_lookup["explicit_first"]:
+        value = _numeric_attribute(feature, explicit)
+        if value is not None:
+            return value, explicit
     z = _z_from_point(point)
     if z is not None:
         return z, "geometry_z"
-    return _z_from_attributes(feature, layer, candidates)
+    fallbacks = list(z_lookup["defaults"])
+    if explicit and not z_lookup["explicit_first"]:
+        fallbacks.insert(0, explicit)
+    for field_name in fallbacks:
+        value = _numeric_attribute(feature, field_name)
+        if value is not None:
+            return value, field_name
+    return None, None
 
 
 def _z_from_point(point):
@@ -299,41 +394,26 @@ def _z_from_point(point):
     return value
 
 
-def _z_from_attributes(feature, layer, candidates):
+def _numeric_attribute(feature, field_name):
     try:
-        field_names = [field.name() for field in layer.fields()]
+        value = feature[field_name]
     except Exception:
-        return None, None
-    lower_to_name = {name.lower(): name for name in field_names}
-    for candidate in candidates:
-        field_name = candidate if candidate in field_names else lower_to_name.get(candidate.lower())
-        if not field_name:
-            continue
-        try:
-            value = feature[field_name]
-        except Exception:
-            continue
-        if value in (None, ""):
-            continue
-        try:
-            value = float(value)
-        except (TypeError, ValueError):
-            continue
-        if math.isnan(value):
-            continue
-        return value, field_name
-    return None, None
+        return None
+    if _is_null(value) or value == "":
+        return None
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(value):
+        return None
+    return value
 
 
-def _selected_attributes(feature, layer, names):
-    try:
-        field_names = [field.name() for field in layer.fields()]
-    except Exception:
-        return {}
-    lower_to_name = {name.lower(): name for name in field_names}
+def _selected_attributes(feature, field_names, names):
     values = {}
     for requested in names:
-        field_name = requested if requested in field_names else lower_to_name.get(requested.lower())
+        field_name = _resolve_field(requested, field_names)
         if not field_name:
             continue
         try:
@@ -344,16 +424,55 @@ def _selected_attributes(feature, layer, names):
     return values
 
 
-def _jsonable_value(value):
+def _all_attributes(feature, field_names, record):
+    """Every source attribute, renamed with ``src_`` if it would overwrite a
+    computed record key such as ``x`` or ``s``."""
+    values = {}
+    for field_name in field_names:
+        try:
+            value = feature[field_name]
+        except Exception:
+            continue
+        key = field_name if field_name not in record else "src_" + field_name
+        values[key] = _jsonable_value(value)
+    return values
+
+
+def _is_null(value):
     if value is None:
+        return True
+    # PyQt5 builds of QGIS return NULL attributes as a null QVariant.
+    is_null = getattr(value, "isNull", None)
+    if is_null is not None and not isinstance(value, (str, bytes)):
+        try:
+            return bool(is_null())
+        except Exception:
+            return False
+    return False
+
+
+def _jsonable_value(value):
+    """Plain JSON/CSV value for an attribute.
+
+    Dates and times use ISO 8601. A datetime keeps exactly the time-zone
+    information it already carries: a naive value (for example a JST GPS
+    ``recordedat``) stays naive and is never shifted.
+    """
+    if _is_null(value):
         return None
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, QDateTime):
+        return value.toString(Qt.ISODateWithMs if value.time().msec() else Qt.ISODate)
+    if isinstance(value, QDate):
+        return value.toString(Qt.ISODate)
+    if isinstance(value, QTime):
+        return value.toString(Qt.ISODateWithMs if value.msec() else Qt.ISODate)
     try:
         if hasattr(value, "toString"):
             return value.toString()
     except Exception:
         pass
-    if isinstance(value, (str, int, float, bool)):
-        return value
     return str(value)
 
 

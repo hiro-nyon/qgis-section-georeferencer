@@ -281,7 +281,28 @@ def write_world_geojson(path, gps_records, plateau_records, crs_auth_id):
         "crs_auth_id": crs_auth_id or None,
         "features": features,
     }
+    crs_member = geojson_crs_member(crs_auth_id)
+    if crs_member is not None:
+        geojson["crs"] = crs_member
     write_json(path, geojson)
+
+
+def geojson_crs_member(crs_auth_id):
+    """Return the legacy GeoJSON ``crs`` member for a CRS auth id.
+
+    RFC 7946 GeoJSON is WGS84 only, so GDAL, QGIS and geopandas read a file
+    without this member as WGS84 and misplace project-CRS coordinates. The
+    2008 ``crs`` member is still honoured by all of them.
+    """
+    if not crs_auth_id:
+        return None
+    text = str(crs_auth_id).strip()
+    authority, _sep, code = text.partition(":")
+    if authority and code and ":" not in code:
+        name = "urn:ogc:def:crs:{}::{}".format(authority.upper(), code)
+    else:
+        name = text
+    return {"type": "name", "properties": {"name": name}}
 
 
 def _world_point_feature(record, source_type):

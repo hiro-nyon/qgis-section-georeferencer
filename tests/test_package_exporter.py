@@ -8,12 +8,19 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from package_exporter import (  # noqa: E402
+    geojson_crs_member,
     localize_config_image_path,
     package_file_names,
     sanitize_package_name,
     write_gps_csv,
     write_plateau_geojson,
+    write_world_geojson,
 )
+
+try:
+    from osgeo import ogr, osr
+except ImportError:  # pragma: no cover - depends on the interpreter
+    ogr = None
 
 
 class PackageFileNameTests(unittest.TestCase):
@@ -84,6 +91,55 @@ class WriterTests(unittest.TestCase):
         self.assertEqual(point["properties"]["u"], 100.0)
         self.assertEqual(line["geometry"]["coordinates"], [[0.0, 0.0], [1.0, 2.0]])
         self.assertEqual(line["properties"]["u0"], 1)
+
+
+class WorldGeojsonCrsTests(unittest.TestCase):
+    # QGIS x/y in JGD2011 / Japan Plane Rectangular CS IX: easting, northing.
+    RECORD = {"x": 10000.0, "y": -50000.0, "z_raw": 3.0, "s": 1.0}
+
+    def write(self, directory, crs_auth_id="EPSG:6677"):
+        path = os.path.join(directory, "world.geojson")
+        write_world_geojson(path, [self.RECORD], [], crs_auth_id)
+        return path
+
+    def test_crs_member_names_the_project_crs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with open(self.write(directory), encoding="utf-8") as file_obj:
+                data = json.load(file_obj)
+        self.assertEqual(
+            data["crs"],
+            {"type": "name", "properties": {"name": "urn:ogc:def:crs:EPSG::6677"}},
+        )
+        self.assertEqual(data["crs_auth_id"], "EPSG:6677")
+
+    def test_no_crs_member_without_a_crs(self):
+        self.assertIsNone(geojson_crs_member(""))
+        self.assertIsNone(geojson_crs_member(None))
+
+    def test_non_epsg_identifier_is_passed_through(self):
+        member = geojson_crs_member("IGNF:LAMB93")
+        self.assertEqual(member["properties"]["name"], "urn:ogc:def:crs:IGNF::LAMB93")
+
+    @unittest.skipUnless(ogr is not None, "GDAL Python bindings are not available")
+    def test_gdal_reads_the_project_crs_and_easting_northing_order(self):
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = ogr.Open(self.write(directory))
+            layer = dataset.GetLayer(0)
+            srs = layer.GetSpatialRef()
+            self.assertEqual(srs.GetAuthorityCode(None), "6677")
+            feature = layer.GetNextFeature()
+            geometry = feature.GetGeometryRef().Clone()
+            srs = srs.Clone()
+            feature = None
+            dataset = None
+        wgs84 = osr.SpatialReference()
+        wgs84.ImportFromEPSG(4326)
+        wgs84.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+        geometry.AssignSpatialReference(srs)
+        geometry.TransformTo(wgs84)
+        # 10 km east and 50 km south of the zone IX origin (36N, 139.8333E).
+        self.assertAlmostEqual(geometry.GetX(), 139.94, places=1)
+        self.assertAlmostEqual(geometry.GetY(), 35.55, places=1)
 
 
 if __name__ == "__main__":

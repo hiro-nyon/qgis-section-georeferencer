@@ -4,6 +4,39 @@
 
 ### Fixed
 
+- PLATEAU/CAD segments bridged the last vertex of one part, face, or ring to
+  the first vertex of the next. LOD1/LOD2 buildings (MultiPolygonZ of faces)
+  gained edges that do not exist in the source, in the reference view, the snap
+  targets, the overlay, and the exported segments. Multipoint layers no longer
+  produce segments at all.
+- A geographic project CRS such as EPSG:6697, which the README used to
+  recommend, made section distance and buffer degrees. Defining the section
+  line, loading a reference, projecting, and exporting are now refused until a
+  projected CRS is set, and the README points to the JGD2011 Plane Rectangular
+  CS zones instead.
+- Changing the section line, z offset, buffer, or height field after results
+  existed kept the old results, so an exported config described settings its
+  rows were not made with. The plugin now asks before clearing the results that
+  depend on the changed value, and keeps the old value if declined. A project
+  CRS change after the line was defined blocks projection and export, loading
+  a config clears the previous PLATEAU reference, and a config saved in another
+  CRS is flagged on load. A config saved in a geographic CRS restores its image
+  and settings but not its line and GCPs, which are in degrees. The GCP residual column no longer shows the previous
+  transform's residuals after a config load.
+- A drawn section line that failed (for example a zero-length double-click)
+  left the map tool active, re-firing the same error on every later click.
+- A typed **Height field** was ignored whenever the geometry had Z, so PointZ
+  GPS data with z=0 used 0. For point layers the named field now takes
+  precedence; line and polygon layers keep geometry Z so 3D buildings are not
+  flattened, and use the field only for geometry without Z.
+- `gps_projected.csv` kept only six fixed attributes, dropping observation
+  times such as TRIMA `recordedat`; it now keeps every source attribute. Empty
+  attributes were written as the string `NULL`, and dates as locale strings
+  such as `Thu Oct 1 08:30:00 2026`; they are now empty cells and ISO 8601
+  without any time-zone shift.
+- `world_projected.geojson` carried its CRS only in a custom member, so GDAL and
+  QGIS read projected coordinates as WGS84 (EPSG:4979). It now declares the
+  project CRS in the GeoJSON `crs` member.
 - A layer whose fields could not be read raised `TypeError` instead of being
   skipped, aborting the whole projection run.
 - Left-dragging to pan the section image or the PLATEAU reference no longer
