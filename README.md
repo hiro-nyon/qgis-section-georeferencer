@@ -22,7 +22,7 @@ invented data. They demonstrate operation, not accuracy on real observations.
 
 ## Installation
 
-For a packaged installation, use `section_georeferencer-0.2.2.zip` from the
+For a packaged installation, use `section_georeferencer-0.2.3.zip` from the
 release assets when published. In QGIS, open **Plugins > Manage and Install
 Plugins > Install from ZIP**, select that file, then enable the plugin. The
 ZIP contains a single `section_georeferencer/` folder. GitHub's automatic
@@ -404,7 +404,7 @@ This is an automated integration check, not a manual click-through test.
 
 Before publishing a release, run both QGIS scripts above, build the ZIP, check
 `git diff --check`, commit the source **including LICENSE**, and tag that exact
-commit `v0.2.2`. Attach the ZIP and checksum to the GitHub Release. Keep `dist/`
+commit `v0.2.3`. Attach the ZIP and checksum to the GitHub Release. Keep `dist/`
 out of source control. See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ## License

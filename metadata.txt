@@ -1,7 +1,7 @@
 [general]
 name=Section Georeferencer
 description=Georeference architectural section drawings and overlay projected 3D geospatial data.
-version=0.2.2
+version=0.2.3
 qgisMinimumVersion=3.44
 qgisMaximumVersion=3.99
 author=Hironobu Kasuga
