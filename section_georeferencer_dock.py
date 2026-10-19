@@ -4,17 +4,19 @@ from __future__ import annotations
 
 import math
 import os
+from contextlib import contextmanager
 
-from qgis.PyQt.QtCore import Qt
-from qgis.PyQt.QtGui import QColor, QCursor
+from qgis.PyQt.QtCore import Qt, QTimer
+from qgis.PyQt.QtGui import QBrush, QColor, QCursor
 from qgis.PyQt.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QDockWidget,
+    QApplication,
     QFileDialog,
     QFormLayout,
     QFrame,
-    QGroupBox,
+    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -22,9 +24,11 @@ from qgis.PyQt.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
+    QToolBox,
     QVBoxLayout,
     QWidget,
 )
@@ -32,12 +36,21 @@ from qgis.core import (
     Qgis,
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
+    QgsFeature,
+    QgsFeatureRequest,
+    QgsMapLayerProxyModel,
     QgsPointXY,
     QgsProject,
     QgsUnitTypes,
     QgsWkbTypes,
 )
-from qgis.gui import QgsMapTool, QgsRubberBand, QgsVertexMarker
+from qgis.gui import (
+    QgsMapLayerComboBox,
+    QgsMapTool,
+    QgsMapToolIdentifyFeature,
+    QgsRubberBand,
+    QgsVertexMarker,
+)
 
 from . import config_io
 from .layer_projector import project_point_layer, project_vector_layer_vertices
@@ -53,11 +66,12 @@ from .transforms import (
     compute_section_basis,
     deformation_warnings,
     fit_affine_pixel_to_section,
+    pixel_to_section,
 )
 
 
 PLUGIN_NAME = "Section Georeferencer"
-PLUGIN_VERSION = "0.1.0"
+PLUGIN_VERSION = "0.2.0"
 
 _STEP_DONE = "✓"
 _STEP_BULLET = "•"
@@ -68,22 +82,6 @@ QDockWidget {
 }
 QDockWidget::title {
     padding: 6px 10px;
-}
-
-/* Group boxes as workflow steps */
-QGroupBox {
-    font-weight: bold;
-    font-size: 12px;
-    border: 1px solid palette(mid);
-    border-radius: 4px;
-    margin-top: 8px;
-    padding: 10px 8px 8px 8px;
-}
-QGroupBox::title {
-    subcontrol-origin: margin;
-    subcontrol-position: top left;
-    padding: 2px 8px;
-    left: 6px;
 }
 
 /* Form fields */
@@ -147,11 +145,44 @@ QHeaderView::section {
     padding: 4px 6px;
 }
 
+/* Workflow steps */
+QToolBox::tab {
+    font-weight: bold;
+    font-size: 12px;
+    padding: 4px 8px;
+    border: 1px solid palette(mid);
+    border-radius: 3px;
+}
+QToolBox::tab:selected {
+    background-color: palette(highlight);
+    color: palette(highlighted-text);
+}
+
 /* Scroll area */
 QScrollArea {
     border: none;
 }
 """
+
+_STEP_TITLES = (
+    "1. Building",
+    "2. Section line",
+    "3. Section image",
+    "4. GCPs",
+    "5. Projection",
+    "6. Export",
+)
+# The building comes first: the section line is then drawn through it, and the
+# PLATEAU reference is projected as soon as both exist.
+STEP_BUILDING, STEP_SECTION, STEP_IMAGE, STEP_GCP, STEP_PROJECTION, STEP_EXPORT = range(6)
+
+# Window width while the section line is drawn on the QGIS map: the step
+# sidebar only.
+COMPACT_WINDOW_WIDTH = 380
+
+# GCP fit quality bands for RMS and per-GCP residuals, in metres.
+RMS_GOOD_M = 0.2
+RMS_FAIR_M = 1.0
 
 
 class SectionGeoreferencerDock(QDockWidget):
@@ -170,6 +201,7 @@ class SectionGeoreferencerDock(QDockWidget):
         # describe those results with values the user typed afterwards.
         self.applied_settings = None
         self._reconciling_settings = False
+        self._geometry_before_map_drawing = None
         self.image_path = None
         self.current_pixel = None
         self.gcps = []
@@ -182,7 +214,12 @@ class SectionGeoreferencerDock(QDockWidget):
         self.reference_records = []
         self.reference_segments = []
         self.section_line_tool = None
+        self.building_pick_tool = None
+        self.building_pick_layer = None
         self.previous_map_tool = None
+        # The PLATEAU building(s) the section is about: layer id + feature ids.
+        self.building_layer_id = None
+        self.building_fids = []
         self.orientation_guide = None
         self._build_ui()
         try:
@@ -224,100 +261,131 @@ class SectionGeoreferencerDock(QDockWidget):
         )
         root_layout.addWidget(self.hint_label)
 
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.setChildrenCollapsible(False)
+        main_splitter = QSplitter(Qt.Horizontal)
+        main_splitter.setChildrenCollapsible(False)
 
-        left_panel = QWidget()
-        left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(0)
-        left_label = QLabel("Section image")
-        left_label.setAlignment(Qt.AlignCenter)
-        left_label.setStyleSheet(
-            "font-size: 11px; font-weight: bold; color: palette(dark);"
-            "padding: 2px 0; background-color: palette(window);"
-            "border-bottom: 1px solid palette(mid);"
-        )
-        left_layout.addWidget(left_label)
+        # The step pages wire buttons to the canvases, so build those first.
         self.canvas = SectionCanvas()
-        self.canvas.setMinimumHeight(250)
+        self.canvas.setMinimumSize(200, 250)
         self.canvas.clickedPixel.connect(self._on_canvas_clicked)
-        left_layout.addWidget(self.canvas, stretch=1)
-
-        right_panel = QWidget()
-        right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(0)
-        right_label = QLabel("PLATEAU reference")
-        right_label.setAlignment(Qt.AlignCenter)
-        right_label.setStyleSheet(
-            "font-size: 11px; font-weight: bold; color: palette(dark);"
-            "padding: 2px 0; background-color: palette(window);"
-            "border-bottom: 1px solid palette(mid);"
-        )
-        right_layout.addWidget(right_label)
+        self.canvas.hoveredPixel.connect(self._on_image_hover)
+        self.image_readout = _readout_label()
         self.reference_canvas = SectionReferenceCanvas()
-        self.reference_canvas.setMinimumHeight(250)
+        self.reference_canvas.setMinimumSize(200, 250)
         self.reference_canvas.clickedSection.connect(self._on_reference_clicked)
-        right_layout.addWidget(self.reference_canvas, stretch=1)
+        self.reference_canvas.hoveredSection.connect(self._on_reference_hover)
+        self.reference_readout = _readout_label()
 
-        splitter.addWidget(left_panel)
-        splitter.addWidget(right_panel)
-        splitter.setSizes([500, 500])
-        root_layout.addWidget(splitter, stretch=1)
+        # Steps live in a sidebar so the canvases get the full window height;
+        # only the step being worked on is expanded.
+        self.steps = QToolBox()
+        self.steps.setMinimumWidth(300)
+        for page, title in zip(
+            (
+                self._building_group(),
+                self._section_group(),
+                self._image_group(),
+                self._gcp_group(),
+                self._projection_group(),
+                self._export_config_group(),
+            ),
+            _STEP_TITLES,
+        ):
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.NoFrame)
+            page.setContentsMargins(4, 4, 4, 4)
+            # Keep the controls packed at the top of a tall page.
+            page.layout().addStretch(1)
+            scroll.setWidget(page)
+            self.steps.addItem(scroll, title)
+        main_splitter.addWidget(self.steps)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        controls = QWidget()
-        controls_layout = QVBoxLayout(controls)
-        controls_layout.setContentsMargins(6, 4, 6, 4)
-        controls_layout.setSpacing(2)
-        controls_layout.addWidget(self._section_group())
-        controls_layout.addWidget(self._reference_group())
-        controls_layout.addWidget(self._image_group())
-        controls_layout.addWidget(self._gcp_group())
-        controls_layout.addWidget(self._projection_group())
-        controls_layout.addWidget(self._export_config_group())
-        controls_layout.addStretch(1)
-        scroll.setWidget(controls)
-        root_layout.addWidget(scroll, stretch=0)
+        canvas_splitter = QSplitter(Qt.Horizontal)
+        canvas_splitter.setChildrenCollapsible(False)
+        for title, view, readout in (
+            ("Section image", self.canvas, self.image_readout),
+            ("PLATEAU reference", self.reference_canvas, self.reference_readout),
+        ):
+            panel = QWidget()
+            panel_layout = QVBoxLayout(panel)
+            panel_layout.setContentsMargins(0, 0, 0, 0)
+            panel_layout.setSpacing(0)
+            label = QLabel(title)
+            label.setAlignment(Qt.AlignCenter)
+            label.setStyleSheet(
+                "font-size: 11px; font-weight: bold; color: palette(dark);"
+                "padding: 2px 0; background-color: palette(window);"
+                "border-bottom: 1px solid palette(mid);"
+            )
+            panel_layout.addWidget(label)
+            panel_layout.addWidget(view, stretch=1)
+            panel_layout.addWidget(readout)
+            canvas_splitter.addWidget(panel)
+        canvas_splitter.setSizes([500, 500])
+        self._canvas_area = canvas_splitter
+        main_splitter.addWidget(canvas_splitter)
+        main_splitter.setStretchFactor(0, 0)
+        main_splitter.setStretchFactor(1, 1)
+        main_splitter.setSizes([340, 760])
+        root_layout.addWidget(main_splitter, stretch=1)
+        self._on_image_hover(math.nan, math.nan)
+        self._on_reference_hover(math.nan, math.nan, "")
 
         self.setWidget(root)
 
-    def _reference_group(self):
-        self._reference_group_box = QGroupBox("2. PLATEAU reference")
+    def _building_group(self):
+        self._reference_group_box = QWidget()
         layout = QVBoxLayout(self._reference_group_box)
         layout.setSpacing(6)
-        self.reference_info_label = QLabel(
-            "Select a PLATEAU building feature, then load as snap target for GCPs."
+
+        layer_label = QLabel("PLATEAU / CAD building layer")
+        layer_label.setStyleSheet("font-size: 10px; color: palette(dark);")
+        layout.addWidget(layer_label)
+        self.building_layer_combo = QgsMapLayerComboBox()
+        self.building_layer_combo.setFilters(_polygon_layer_filter())
+        self.building_layer_combo.setAllowEmptyLayer(False)
+        active = self.iface.activeLayer()
+        if active is not None and self.building_layer_combo.findText(active.name()) >= 0:
+            self.building_layer_combo.setLayer(active)
+        layout.addWidget(self.building_layer_combo)
+
+        button_row = QHBoxLayout()
+        button_row.setSpacing(4)
+        pick_button = _primary_button("Pick on map")
+        pick_button.setToolTip(
+            "Click the building on the QGIS map.\n"
+            "Shift-click adds or removes more buildings; Esc or right-click finishes."
         )
+        pick_button.clicked.connect(self._start_building_pick)
+        selection_button = QPushButton("Use QGIS selection")
+        selection_button.setToolTip(
+            "Use the features already selected in the active QGIS layer"
+        )
+        selection_button.clicked.connect(self._use_qgis_selection_as_building)
+        clear_button = QPushButton("Clear")
+        clear_button.clicked.connect(self._clear_plateau_reference)
+        button_row.addWidget(pick_button)
+        button_row.addWidget(selection_button)
+        button_row.addWidget(clear_button)
+        layout.addLayout(button_row)
+
+        self.building_info_label = QLabel(_NO_BUILDING_TEXT)
+        self.building_info_label.setWordWrap(True)
+        self.building_info_label.setStyleSheet("font-size: 11px; color: palette(dark);")
+        layout.addWidget(self.building_info_label)
+
+        self.reference_info_label = QLabel(_NO_REFERENCE_TEXT)
         self.reference_info_label.setWordWrap(True)
         self.reference_info_label.setStyleSheet("color: palette(dark); font-size: 11px;")
         layout.addWidget(self.reference_info_label)
-        button_row = QHBoxLayout()
-        button_row.setSpacing(4)
-        load_button = _primary_button("Load selected")
-        load_button.setToolTip(
-            "Project selected PLATEAU/CAD feature(s) into section coordinates.\n"
-            "Click the PLATEAU reference panel (right) to snap to vertices/segments and fill GCP target s/z."
-        )
-        load_button.clicked.connect(self._load_selected_plateau_reference)
-        clear_button = QPushButton("Clear")
-        clear_button.clicked.connect(self._clear_plateau_reference)
-        fit_button = QPushButton("Fit")
-        fit_button.clicked.connect(self.reference_canvas.fit_to_reference)
-        button_row.addWidget(load_button)
-        button_row.addWidget(clear_button)
-        button_row.addWidget(fit_button)
-        layout.addLayout(button_row)
 
         option_row = QHBoxLayout()
         option_row.setSpacing(10)
         self.reference_snap_check = QCheckBox("Snap")
         self.reference_snap_check.setChecked(True)
         self.reference_snap_check.setToolTip(
-            "Snap PLATEAU reference clicks to vertices, segment endpoints, and nearest segment points."
+            "Snap PLATEAU reference clicks to corners first, then to edges."
         )
         self.reference_snap_check.stateChanged.connect(self._set_reference_snap_enabled)
         self.reference_overlay_check = QCheckBox("Overlay on CAD")
@@ -326,54 +394,46 @@ class SectionGeoreferencerDock(QDockWidget):
             "After 3 or more GCPs compute a transform, overlay the PLATEAU reference on the CAD image."
         )
         self.reference_overlay_check.stateChanged.connect(self._set_reference_overlay_enabled)
+        fit_button = QPushButton("Fit")
+        fit_button.setToolTip("Fit the PLATEAU reference panel to the building")
+        fit_button.clicked.connect(self.reference_canvas.fit_to_reference)
         option_row.addWidget(self.reference_snap_check)
         option_row.addWidget(self.reference_overlay_check)
         option_row.addStretch()
+        option_row.addWidget(fit_button)
         layout.addLayout(option_row)
         return self._reference_group_box
 
     def _section_group(self):
-        self._section_group_box = QGroupBox("1. Section line")
+        self._section_group_box = QWidget()
         layout = QVBoxLayout(self._section_group_box)
         layout.setSpacing(6)
 
-        p0_row = QHBoxLayout()
-        p0_row.setSpacing(6)
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(6)
+        grid.setVerticalSpacing(4)
+        for column, text in ((1, "x"), (2, "y")):
+            header = QLabel(text)
+            header.setStyleSheet("font-size: 10px; color: palette(dark);")
+            grid.addWidget(header, 0, column)
         self.x0_edit = QLineEdit()
         self.y0_edit = QLineEdit()
-        p0_label = QLabel("P0 / LEFT")
-        p0_label.setStyleSheet("font-weight: bold; font-size: 11px; color: palette(dark); min-width: 20px;")
-        p0_row.addWidget(p0_label)
-        for lbl, widget in [("x", self.x0_edit), ("y", self.y0_edit)]:
-            widget.setPlaceholderText("0.0")
-            widget.setToolTip("Project CRS coordinate")
-            col = QVBoxLayout()
-            col.setSpacing(1)
-            fl = QLabel(lbl)
-            fl.setStyleSheet("font-size: 10px; color: palette(dark);")
-            col.addWidget(fl)
-            col.addWidget(widget)
-            p0_row.addLayout(col)
-        layout.addLayout(p0_row)
-
-        p1_row = QHBoxLayout()
-        p1_row.setSpacing(6)
         self.x1_edit = QLineEdit()
         self.y1_edit = QLineEdit()
-        p1_label = QLabel("P1 / RIGHT")
-        p1_label.setStyleSheet("font-weight: bold; font-size: 11px; color: palette(dark); min-width: 20px;")
-        p1_row.addWidget(p1_label)
-        for lbl, widget in [("x", self.x1_edit), ("y", self.y1_edit)]:
-            widget.setPlaceholderText("0.0")
-            widget.setToolTip("Project CRS coordinate")
-            col = QVBoxLayout()
-            col.setSpacing(1)
-            fl = QLabel(lbl)
-            fl.setStyleSheet("font-size: 10px; color: palette(dark);")
-            col.addWidget(fl)
-            col.addWidget(widget)
-            p1_row.addLayout(col)
-        layout.addLayout(p1_row)
+        for row, text, edits in (
+            (1, "P0 / LEFT", (self.x0_edit, self.y0_edit)),
+            (2, "P1 / RIGHT", (self.x1_edit, self.y1_edit)),
+        ):
+            label = QLabel(text)
+            label.setStyleSheet("font-weight: bold; font-size: 11px; color: palette(dark);")
+            grid.addWidget(label, row, 0)
+            for column, widget in enumerate(edits, start=1):
+                widget.setPlaceholderText("0.0")
+                widget.setToolTip("Project CRS coordinate")
+                grid.addWidget(widget, row, column)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(2, 1)
+        layout.addLayout(grid)
 
         button_row = QHBoxLayout()
         button_row.setSpacing(4)
@@ -411,7 +471,7 @@ class SectionGeoreferencerDock(QDockWidget):
         return self._section_group_box
 
     def _image_group(self):
-        self._image_group_box = QGroupBox("3. Section image")
+        self._image_group_box = QWidget()
         layout = QVBoxLayout(self._image_group_box)
         layout.setSpacing(6)
         self.image_info_label = QLabel("No image loaded")
@@ -434,11 +494,12 @@ class SectionGeoreferencerDock(QDockWidget):
         return self._image_group_box
 
     def _gcp_group(self):
-        self._gcp_group_box = QGroupBox("4. GCP manager")
+        self._gcp_group_box = QWidget()
         layout = QVBoxLayout(self._gcp_group_box)
         layout.setSpacing(6)
 
-        self.clicked_pixel_label = QLabel("Pixel: -")
+        self.clicked_pixel_label = QLabel(_NO_PIXEL_TEXT)
+        self.clicked_pixel_label.setWordWrap(True)
         self.clicked_pixel_label.setToolTip("Click on the section image to pick a pixel position")
         self.clicked_pixel_label.setStyleSheet("font-size: 11px; color: palette(dark);")
         layout.addWidget(self.clicked_pixel_label)
@@ -464,8 +525,14 @@ class SectionGeoreferencerDock(QDockWidget):
         button_row = QHBoxLayout()
         button_row.setSpacing(4)
         add_button = _primary_button("Add GCP")
-        add_button.setToolTip("Register clicked pixel as a Ground Control Point")
+        add_button.setToolTip(
+            "Register the picked image pixel (orange mark, left) with the "
+            "target s/z (orange mark, right) as a Ground Control Point"
+        )
         add_button.clicked.connect(self._add_gcp)
+        self.add_gcp_button = add_button
+        self.gcp_s_edit.textChanged.connect(self._update_add_gcp_state)
+        self.gcp_z_edit.textChanged.connect(self._update_add_gcp_state)
         delete_button = QPushButton("Delete")
         delete_button.setProperty("danger", True)
         delete_button.clicked.connect(self._delete_selected_gcp)
@@ -478,7 +545,7 @@ class SectionGeoreferencerDock(QDockWidget):
 
         self.gcp_table = QTableWidget(0, 5)
         self.gcp_table.setHorizontalHeaderLabels(
-            ["u (px)", "v (px)", "s (m)", "z (m)", "residual (m)"]
+            ["u (px)", "v (px)", "s (m)", "z (m)", "res. (m)"]
         )
         self.gcp_table.setToolTip(
             "Select a row to highlight that GCP on the section image.\n"
@@ -500,6 +567,13 @@ class SectionGeoreferencerDock(QDockWidget):
         compute_button.setToolTip("Compute affine transform from GCPs (minimum 3 required)")
         compute_button.clicked.connect(self._compute_transform)
         self.rms_label = QLabel("RMS: -")
+        self.rms_label.setWordWrap(True)
+        self.rms_label.setToolTip(
+            "Green: RMS up to {:.1f} m. Amber: up to {:.1f} m. Red: above. "
+            "The residual column uses the same colours per GCP.".format(
+                RMS_GOOD_M, RMS_FAIR_M
+            )
+        )
         self.rms_label.setStyleSheet("font-size: 11px; color: palette(dark);")
         transform_row.addWidget(compute_button)
         transform_row.addWidget(self.rms_label)
@@ -518,7 +592,7 @@ class SectionGeoreferencerDock(QDockWidget):
         return self._gcp_group_box
 
     def _projection_group(self):
-        self._projection_group_box = QGroupBox("5. Layer projection")
+        self._projection_group_box = QWidget()
         layout = QVBoxLayout(self._projection_group_box)
         layout.setSpacing(6)
 
@@ -583,11 +657,10 @@ class SectionGeoreferencerDock(QDockWidget):
         return self._projection_group_box
 
     def _export_config_group(self):
-        group = QGroupBox("6. Export")
+        group = QWidget()
         layout = QVBoxLayout(group)
         layout.setSpacing(4)
 
-        from qgis.PyQt.QtWidgets import QGridLayout
         grid = QGridLayout()
         grid.setSpacing(4)
 
@@ -624,6 +697,7 @@ class SectionGeoreferencerDock(QDockWidget):
         except Exception:
             self._warn("QGIS map canvas is not available.")
             return
+        self._finish_map_tools()
         self.previous_map_tool = canvas.mapTool()
         self.section_line_tool = SectionLineMapTool(
             canvas,
@@ -631,10 +705,46 @@ class SectionGeoreferencerDock(QDockWidget):
             self._cancel_drawn_section_line,
         )
         canvas.setMapTool(self.section_line_tool)
+        try:
+            self.section_line_tool.deactivated.connect(self._restore_after_map_drawing)
+        except Exception:
+            pass
+        self._compact_for_map_drawing()
         self._info(
             "Click the endpoint that should appear on the LEFT of the section drawing "
-            "(P0), then click the RIGHT endpoint (P1). Snapping follows QGIS settings."
+            "(P0), then click the RIGHT endpoint (P1). Snapping follows QGIS settings. "
+            "Esc or right-click cancels."
         )
+
+    def _compact_for_map_drawing(self):
+        """Shrink the always-on-top window to its step sidebar at the screen's
+        right edge, so it does not cover the map while P0/P1 are clicked."""
+        if not self.isWindow() or self._geometry_before_map_drawing is not None:
+            return
+        self._geometry_before_map_drawing = self.saveGeometry()
+        width = COMPACT_WINDOW_WIDTH
+        self._canvas_area.hide()
+        # Recompute the minimum size now, or resize() is clamped to the
+        # minimum that still includes the hidden canvases.
+        self._canvas_area.parentWidget().updateGeometry()
+        for layout in (self.widget().layout(), self.layout()):
+            if layout is not None:
+                # activate() alone is a no-op until the hide's deferred
+                # layout request arrives.
+                layout.invalidate()
+                layout.activate()
+        self.resize(width, self.height())
+        screen = self.screen() if hasattr(self, "screen") else None
+        if screen is not None:
+            available = screen.availableGeometry()
+            self.move(available.right() - self.frameGeometry().width() + 1, self.y())
+
+    def _restore_after_map_drawing(self):
+        geometry = self._geometry_before_map_drawing
+        self._geometry_before_map_drawing = None
+        if geometry is not None:
+            self._canvas_area.show()
+            self.restoreGeometry(geometry)
 
     def _finish_drawn_section_line(self, p0, p1):
         error = None
@@ -656,9 +766,12 @@ class SectionGeoreferencerDock(QDockWidget):
             pass
         self.section_line_tool = None
         self.previous_map_tool = None
+        self._restore_after_map_drawing()
         if error is not None:
             self._warn(error)
-        elif applied:
+        elif applied and not self.building_fids:
+            # With a building picked, the reference load has just reported
+            # its own result; keep that message.
             self._info(
                 "Section line set. P0 is the LEFT end and P1 is the RIGHT end of "
                 "the section-coordinate view."
@@ -673,6 +786,7 @@ class SectionGeoreferencerDock(QDockWidget):
             pass
         self.section_line_tool = None
         self.previous_map_tool = None
+        self._restore_after_map_drawing()
         self._info("Section line drawing canceled.")
 
     def _use_manual_section(self):
@@ -722,56 +836,215 @@ class SectionGeoreferencerDock(QDockWidget):
         except Exception as exc:
             self._warn("Could not use selected line: {}".format(exc))
 
-    def _load_selected_plateau_reference(self):
+    # -- building (step 1) ------------------------------------------------
+
+    def _start_building_pick(self):
+        layer = self.building_layer_combo.currentLayer()
+        if layer is None:
+            self._warn(
+                "Add the PLATEAU building layer to QGIS first; it then appears "
+                "in the layer list of step 1."
+            )
+            return
+        try:
+            canvas = self.iface.mapCanvas()
+        except Exception:
+            self._warn("QGIS map canvas is not available.")
+            return
+        self._finish_map_tools()
+        self.previous_map_tool = canvas.mapTool()
+        self.building_pick_layer = layer
+        self.building_pick_tool = BuildingPickMapTool(
+            canvas, layer, self._on_building_picked, self._finish_building_pick
+        )
+        canvas.setMapTool(self.building_pick_tool)
+        tool = self.building_pick_tool
+        try:
+            tool.deactivated.connect(lambda: self._on_pick_tool_deactivated(tool))
+        except Exception:
+            pass
+        self._compact_for_map_drawing()
+        self._info(
+            "Click the building on the QGIS map ({}). Shift-click adds or removes "
+            "more buildings; Esc or right-click finishes.".format(layer.name())
+        )
+
+    def _on_building_picked(self, feature, modifiers):
+        layer = self.building_pick_layer
+        if feature is None:
+            self._info(
+                "No building of {} under the cursor. Click inside the building.".format(
+                    _layer_name(layer)
+                )
+            )
+            return
+        additive = bool(
+            int(modifiers)
+            & int(Qt.ShiftModifier | Qt.ControlModifier | Qt.MetaModifier)
+        )
+        if additive:
+            # Shift/Cmd-click toggles this building and keeps the tool active.
+            fids = list(self.building_fids) if self.building_layer_id == layer.id() else []
+            if feature.id() in fids:
+                fids.remove(feature.id())
+            else:
+                fids.append(feature.id())
+            self._set_building(layer, fids)
+            return
+        self._finish_building_pick()
+        self._set_building(layer, [feature.id()])
+
+    def _on_pick_tool_deactivated(self, tool):
+        # The user switched to another QGIS map tool while picking.
+        if self.building_pick_tool is tool:
+            self.building_pick_tool = None
+            self.previous_map_tool = None
+        self._restore_after_map_drawing()
+
+    def _finish_building_pick(self):
+        tool = self.building_pick_tool
+        if tool is None:
+            return
+        self.building_pick_tool = None
+        try:
+            canvas = self.iface.mapCanvas()
+            if self.previous_map_tool is not None:
+                canvas.setMapTool(self.previous_map_tool)
+            else:
+                canvas.unsetMapTool(tool)
+        except Exception:
+            pass
+        self.previous_map_tool = None
+        self._restore_after_map_drawing()
+
+    def _finish_map_tools(self):
+        """Only one of the plugin's map tools is active at a time."""
+        if self.building_pick_tool is not None:
+            self._finish_building_pick()
+        if self.section_line_tool is not None:
+            self._cancel_drawn_section_line()
+
+    def _use_qgis_selection_as_building(self):
+        layer = self.iface.activeLayer()
+        if layer is None or not hasattr(layer, "selectedFeatureIds"):
+            self._warn("Select the PLATEAU building in the active QGIS vector layer first.")
+            return
+        fids = list(layer.selectedFeatureIds())
+        if not fids:
+            self._warn("Select the PLATEAU building in the active QGIS vector layer first.")
+            return
+        self._set_building(layer, fids)
+
+    def _set_building(self, layer, fids):
+        """Make these features the building of the section.
+
+        They are also selected in their layer, so they are highlighted on the
+        map and 'PLATEAU/CAD' in step 5 projects the same building.
+        """
+        if not fids:
+            self._clear_building()
+            self._update_workflow_state()
+            self._info("No building selected.")
+            return
+        previous = self._building_layer()
+        if previous is not None and previous is not layer:
+            previous.deselect(self.building_fids)
+        self.building_layer_id = layer.id()
+        self.building_fids = list(fids)
+        layer.selectByIds(self.building_fids)
+        if self.building_layer_combo.currentLayer() is not layer:
+            self.building_layer_combo.setLayer(layer)
+        self.building_info_label.setText(_building_summary(layer, self.building_fids))
+        self.building_info_label.setStyleSheet("font-size: 11px; color: palette(text);")
+        if self.section_p0 is not None and self.section_p1 is not None:
+            self._load_plateau_reference()
+        else:
+            self._update_workflow_state()
+            self._info(
+                "Building selected. Next, draw the section line through it in step 2."
+            )
+        self._advance_step(STEP_BUILDING)
+
+    def _building_layer(self):
+        if not self.building_layer_id:
+            return None
+        return QgsProject.instance().mapLayer(self.building_layer_id)
+
+    def _clear_building(self):
+        layer = self._building_layer()
+        if layer is not None and self.building_fids:
+            try:
+                layer.deselect(self.building_fids)
+            except Exception:
+                pass
+        self.building_layer_id = None
+        self.building_fids = []
+        self.building_info_label.setText(_NO_BUILDING_TEXT)
+        self.building_info_label.setStyleSheet("font-size: 11px; color: palette(dark);")
+
+    def _load_plateau_reference(self):
+        """Project the chosen building onto the current section line."""
         if self.section_p0 is None or self.section_p1 is None:
-            self._warn("Define the section line before loading a PLATEAU reference.")
+            return
+        layer = self._building_layer()
+        if layer is None or not self.building_fids:
+            self._warn("Pick the PLATEAU building in step 1 first.")
             return
         if not self._section_crs_ok():
             return
         settings = self._settings_for_use()
         if settings is None:
             return
-        layer = self.iface.activeLayer()
-        if layer is None or not hasattr(layer, "selectedFeatures"):
-            self._warn("Select one PLATEAU/CAD feature in the active vector layer first.")
-            return
-        try:
-            selected_features = layer.selectedFeatures()
-        except Exception:
-            selected_features = []
-        if not selected_features:
-            self._warn("Select the target PLATEAU building feature before loading the reference.")
+        features = list(
+            layer.getFeatures(QgsFeatureRequest().setFilterFids(self.building_fids))
+        )
+        if not features:
+            self._warn("The picked building is no longer in layer {}.".format(layer.name()))
             return
 
         identity_section_to_pixel = {
             "u": [0.0, 1.0, 0.0],
             "v": [0.0, 0.0, 1.0],
         }
-        result = project_vector_layer_vertices(
-            layer,
-            QgsProject.instance().crs(),
-            self.section_p0,
-            self.section_p1,
-            identity_section_to_pixel,
-            settings["z_offset"],
-            settings["buffer_width"],
-            settings["z_field"],
-            features=selected_features,
-        )
+        with _busy():
+            result = project_vector_layer_vertices(
+                layer,
+                QgsProject.instance().crs(),
+                self.section_p0,
+                self.section_p1,
+                identity_section_to_pixel,
+                settings["z_offset"],
+                settings["buffer_width"],
+                settings["z_field"],
+                features=features,
+            )
         try:
             self.reference_canvas.load_reference(
                 result["draw_records"], result["draw_segments"]
             )
-        except ValueError as exc:
-            self._warn(str(exc))
+        except ValueError:
+            self._reset_reference_state()
+            self._update_workflow_state()
+            self._warn(
+                "The section line does not pass within {} m of the picked "
+                "building. Redraw the line through the building (step 2) or "
+                "widen the buffer (step 5).".format(_format_float(settings["buffer_width"]))
+            )
             return
         self.reference_records = result["draw_records"]
         self.reference_segments = result["draw_segments"]
         self.applied_settings = dict(settings)
+        self.reference_canvas.draw_gcp_targets(self.gcps)
+        try:
+            self.reference_canvas.set_pending_target(
+                float(self.gcp_s_edit.text()), float(self.gcp_z_edit.text())
+            )
+        except ValueError:
+            pass
         self.reference_info_label.setText(
-            "Loaded {} selected feature(s), {} vertices inside buffer. Move near a vertex/segment to snap, then click to fill target s/z.".format(
-                len(selected_features),
-                len(result["draw_records"]),
+            "Reference: {} vertices within the {} m buffer. Click the right-hand "
+            "panel to pick GCP targets.".format(
+                len(result["draw_records"]), _format_float(settings["buffer_width"])
             )
         )
         self._update_reference_overlay()
@@ -779,33 +1052,88 @@ class SectionGeoreferencerDock(QDockWidget):
         if result["warnings"]:
             self._warn("PLATEAU reference loaded with warning: {}".format(" ".join(result["warnings"][:3])))
         else:
-            self._info("PLATEAU reference section loaded.")
+            self._info(
+                "PLATEAU reference loaded: {} vertices of the building lie on the "
+                "section.".format(len(result["draw_records"]))
+            )
 
     def _clear_plateau_reference(self):
+        self._clear_building()
         self._reset_reference_state()
         self._update_workflow_state()
-        self._info("PLATEAU reference cleared.")
+        self._info("Building and PLATEAU reference cleared.")
 
     def _reset_reference_state(self):
         self.reference_canvas.clear_reference()
         self.reference_records = []
         self.reference_segments = []
         self.canvas.clear_reference_overlay()
-        self.reference_info_label.setText(
-            "Select a PLATEAU building feature, then load as snap target for GCPs."
-        )
+        self.reference_info_label.setText(_NO_REFERENCE_TEXT)
 
     def _on_reference_clicked(self, s, z):
-        self.gcp_s_edit.setText(_format_float(s))
-        self.gcp_z_edit.setText(_format_float(z))
-        self._info("GCP target set from PLATEAU reference: s={}, z={}".format(
-            _format_float(s),
-            _format_float(z),
-        ))
+        self.gcp_s_edit.setText(_format_m(s))
+        self.gcp_z_edit.setText(_format_m(z))
+        self.reference_canvas.set_pending_target(s, z)
+        if self.current_pixel is None:
+            self._info(
+                "Target s={} m, z={} m picked. Now click the matching point on "
+                "the section image.".format(_format_m(s), _format_m(z))
+            )
+        else:
+            self._info(
+                "Target s={} m, z={} m picked. Click 'Add GCP' to register the "
+                "pair.".format(_format_m(s), _format_m(z))
+            )
 
-    def _set_reference_snap_enabled(self, state):
-        enabled = state == Qt.Checked
-        self.reference_canvas.set_snap_enabled(enabled)
+    def _on_image_hover(self, u, v):
+        if math.isnan(u) or math.isnan(v):
+            self.image_readout.setText("Click the image to pick a GCP pixel. Drag to pan, wheel to zoom.")
+            return
+        text = "u {:.1f}  v {:.1f} px".format(u, v)
+        if self.transform_result is not None:
+            try:
+                s, z = pixel_to_section(u, v, self.transform_result["pixel_to_section"])
+                text += "   →  s {} m  z {} m".format(_format_m(s), _format_m(z))
+            except (KeyError, TypeError, ValueError):
+                pass
+        self.image_readout.setText(text)
+
+    def _on_reference_hover(self, s, z, kind):
+        if math.isnan(s) or math.isnan(z):
+            self.reference_readout.setText(
+                "Click to pick the GCP target. Corners snap first. Drag to pan, wheel to zoom."
+            )
+            return
+        snap = {"vertex": "corner", "segment_endpoint": "corner", "segment": "edge"}.get(kind)
+        self.reference_readout.setText(
+            "s {} m  z {} m{}".format(
+                _format_m(s), _format_m(z), "   (snap: {})".format(snap) if snap else ""
+            )
+        )
+
+    def _update_add_gcp_state(self, *_args):
+        ready = (
+            self.current_pixel is not None
+            and bool(self.gcp_s_edit.text().strip())
+            and bool(self.gcp_z_edit.text().strip())
+        )
+        self.add_gcp_button.setEnabled(ready)
+
+    def _clear_pending_pick(self):
+        self.current_pixel = None
+        self.clicked_pixel_label.setText(_NO_PIXEL_TEXT)
+        self.gcp_s_edit.clear()
+        self.gcp_z_edit.clear()
+        self.canvas.clear_pending_pixel()
+        self.reference_canvas.clear_pending_target()
+        self._update_add_gcp_state()
+
+    def _redraw_gcp_marks(self):
+        self.canvas.draw_gcp_markers(self.gcps)
+        self.reference_canvas.draw_gcp_targets(self.gcps)
+
+    def _set_reference_snap_enabled(self, _state):
+        self.reference_canvas.set_snap_enabled(self.reference_snap_check.isChecked())
 
     def _set_reference_overlay_enabled(self, _state):
         self._update_reference_overlay()
@@ -836,12 +1164,16 @@ class SectionGeoreferencerDock(QDockWidget):
             # The edits show 12 significant digits; re-applying them must not
             # count as a new line or replace the full-precision coordinates.
             new_p0, new_p1 = self.section_p0, self.section_p1
+        needs_reference = changes_line or not (
+            self.reference_records or self.reference_segments
+        )
         if changes_line and self._has_section_dependents():
             if confirm and not self._confirm(
                 "Change section line",
-                "The PLATEAU reference, GCP targets, transform, and projected "
-                "overlay were measured along the current section line.\n\n"
-                "Use the new line and clear them?",
+                "These were measured along the current section line and will "
+                "be cleared:\n\n{}\n\nUse the new line?".format(
+                    _bullets(self._section_dependent_names())
+                ),
             ):
                 self._info("Section line unchanged.")
                 return False
@@ -854,9 +1186,13 @@ class SectionGeoreferencerDock(QDockWidget):
         if self.orientation_guide is not None:
             self.orientation_guide.set_section(self.section_p0, self.section_p1)
         self._update_section_labels()
+        self._update_workflow_state()
+        self._advance_step(STEP_SECTION)
         self._info(
             "Section line set. P0 = section LEFT; P1 = section RIGHT."
         )
+        if needs_reference and self.building_fids:
+            self._load_plateau_reference()
         return True
 
     def _clear_section(self):
@@ -873,10 +1209,25 @@ class SectionGeoreferencerDock(QDockWidget):
     def _show_section_in_edits(self):
         if self.section_p0 is None or self.section_p1 is None:
             return
-        self.x0_edit.setText(_format_float(self.section_p0[0]))
-        self.y0_edit.setText(_format_float(self.section_p0[1]))
-        self.x1_edit.setText(_format_float(self.section_p1[0]))
-        self.y1_edit.setText(_format_float(self.section_p1[1]))
+        self.x0_edit.setText(_format_coord(self.section_p0[0]))
+        self.y0_edit.setText(_format_coord(self.section_p0[1]))
+        self.x1_edit.setText(_format_coord(self.section_p1[0]))
+        self.y1_edit.setText(_format_coord(self.section_p1[1]))
+
+    def _section_dependent_names(self):
+        names = []
+        if self.reference_records or self.reference_segments:
+            names.append("PLATEAU reference")
+        if self.gcps or self.transform_result is not None:
+            names.append("GCPs and transform")
+        if self._has_projection():
+            names.append("Projected overlay")
+        return names
+
+    def _advance_step(self, step):
+        """Open the next step after finishing the one the user is on."""
+        if self.steps.currentIndex() == step and step + 1 < self.steps.count():
+            self.steps.setCurrentIndex(step + 1)
 
     def _has_section_dependents(self):
         return bool(
@@ -896,7 +1247,8 @@ class SectionGeoreferencerDock(QDockWidget):
     def _reset_gcp_state(self):
         self.gcps = []
         self.transform_result = None
-        self.canvas.clear_gcp_markers()
+        self._clear_pending_pick()
+        self._redraw_gcp_marks()
         self.canvas.clear_reference_overlay()
         self._update_gcp_table()
         self._update_transform_label()
@@ -908,6 +1260,8 @@ class SectionGeoreferencerDock(QDockWidget):
 
     def cleanup(self):
         """Remove map-canvas items owned by this dock before plugin unload."""
+        if self.building_pick_tool is not None:
+            self._finish_building_pick()
         if self.section_line_tool is not None:
             tool = self.section_line_tool
             self.section_line_tool = None
@@ -959,7 +1313,8 @@ class SectionGeoreferencerDock(QDockWidget):
 
     def _load_image(self, path, clear_state=False):
         try:
-            self.canvas.load_image(path)
+            with _busy():
+                self.canvas.load_image(path)
         except ValueError as exc:
             # Nothing has been discarded yet, so the previous session survives
             # an unreadable file.
@@ -973,21 +1328,24 @@ class SectionGeoreferencerDock(QDockWidget):
             self._update_transform_label()
         self.image_path = path
         self.current_pixel = None
-        self.clicked_pixel_label.setText("Pixel: -")
+        self.clicked_pixel_label.setText(_NO_PIXEL_TEXT)
+        self._update_add_gcp_state()
         # Loading an image rebuilds the scene from scratch, so every overlay
         # has to be redrawn from the dock's state.
-        self.canvas.draw_gcp_markers(self.gcps)
+        self._redraw_gcp_marks()
         self._redraw_projected_overlays()
         self._update_reference_overlay()
         self._update_image_info()
         self._update_workflow_state()
+        self._advance_step(STEP_IMAGE)
         self._info("Loaded image: {}".format(os.path.basename(path)))
 
     def _clear_image(self):
         self.canvas.clear_image()
         self.image_path = None
         self.current_pixel = None
-        self.clicked_pixel_label.setText("Pixel: -")
+        self.clicked_pixel_label.setText(_NO_PIXEL_TEXT)
+        self._update_add_gcp_state()
         # The scene is gone with the image; drop the overlays it was carrying
         # so the step summary and the exported package cannot disagree with it.
         self._reset_projection_state()
@@ -998,8 +1356,17 @@ class SectionGeoreferencerDock(QDockWidget):
     def _on_canvas_clicked(self, u, v):
         self.current_pixel = (float(u), float(v))
         self.clicked_pixel_label.setText(
-            "Pixel: u={:.1f}, v={:.1f}".format(u, v)
+            "Picked pixel: u={:.1f}, v={:.1f} (orange mark)".format(u, v)
         )
+        self.canvas.set_pending_pixel(u, v)
+        self._update_add_gcp_state()
+        if self.gcp_s_edit.text().strip() and self.gcp_z_edit.text().strip():
+            self._info("Image point picked. Click 'Add GCP' to register the pair.")
+        else:
+            self._info(
+                "Image point picked. Now click the matching point on the "
+                "PLATEAU reference (right), or type s and z."
+            )
 
     def _add_gcp(self):
         if self.current_pixel is None:
@@ -1017,8 +1384,11 @@ class SectionGeoreferencerDock(QDockWidget):
         u, v = self.current_pixel
         self.gcps.append({"u": u, "v": v, "s": s, "z": z})
         self.applied_settings = dict(settings)
+        # A pick is used once: keeping it would let a second click on 'Add
+        # GCP', or a click outside the image, silently reuse the old pixel.
+        self._clear_pending_pick()
         self._update_gcp_table()
-        self.canvas.draw_gcp_markers(self.gcps)
+        self._redraw_gcp_marks()
         if len(self.gcps) >= 3:
             self._compute_transform()
         else:
@@ -1034,7 +1404,7 @@ class SectionGeoreferencerDock(QDockWidget):
             return
         self.gcps.pop(row)
         self._update_gcp_table()
-        self.canvas.draw_gcp_markers(self.gcps)
+        self._redraw_gcp_marks()
         if len(self.gcps) >= 3:
             self._compute_transform()
         else:
@@ -1065,7 +1435,7 @@ class SectionGeoreferencerDock(QDockWidget):
         self._update_reference_overlay()
         self._update_workflow_state()
         warnings = deformation_warnings(self.transform_result.get("deformation"))
-        message = "Affine transform computed (RMS={} m from {} GCPs).".format(
+        message = "Affine transform computed (RMS {} m from {} GCPs).".format(
             _rms_text(self.transform_result.get("rms")), len(self.gcps)
         )
         if warnings:
@@ -1081,17 +1451,30 @@ class SectionGeoreferencerDock(QDockWidget):
             return
         layer = self.iface.activeLayer()
         project_crs = QgsProject.instance().crs()
-        result = project_point_layer(
-            layer,
-            project_crs,
-            self.section_p0,
-            self.section_p1,
-            self.transform_result["section_to_pixel"],
-            settings["z_offset"],
-            settings["buffer_width"],
-            settings["z_field"],
-        )
+        try:
+            selected_features = layer.selectedFeatures()
+        except Exception:
+            selected_features = []
+        with _busy():
+            result = project_point_layer(
+                layer,
+                project_crs,
+                self.section_p0,
+                self.section_p1,
+                self.transform_result["section_to_pixel"],
+                settings["z_offset"],
+                settings["buffer_width"],
+                settings["z_field"],
+                features=selected_features or None,
+            )
         layer_name = _layer_name(layer)
+        notes = []
+        if selected_features:
+            notes.append(
+                "Projected {} selected feature(s) of {}.".format(
+                    len(selected_features), layer_name
+                )
+            )
         replaced = layer_name in self.gps_results
         self.gps_results[layer_name] = result
         self.applied_settings = dict(settings)
@@ -1102,7 +1485,9 @@ class SectionGeoreferencerDock(QDockWidget):
             result["summary"].get("inside_buffer", 0),
             _skipped_count(result["summary"]),
             result["warnings"],
-            note=_replaced_note(replaced, layer_name),
+            note=" ".join(
+                note for note in [_replaced_note(replaced, layer_name)] + notes if note
+            ) or None,
         )
 
     def _project_active_vector_layer(self):
@@ -1118,21 +1503,25 @@ class SectionGeoreferencerDock(QDockWidget):
             selected_features = layer.selectedFeatures()
         except Exception:
             selected_features = []
-        result = project_vector_layer_vertices(
-            layer,
-            project_crs,
-            self.section_p0,
-            self.section_p1,
-            self.transform_result["section_to_pixel"],
-            settings["z_offset"],
-            settings["buffer_width"],
-            settings["z_field"],
-            features=selected_features or None,
-        )
+        with _busy():
+            result = project_vector_layer_vertices(
+                layer,
+                project_crs,
+                self.section_p0,
+                self.section_p1,
+                self.transform_result["section_to_pixel"],
+                settings["z_offset"],
+                settings["buffer_width"],
+                settings["z_field"],
+                features=selected_features or None,
+            )
         layer_name = _layer_name(layer)
+        notes = []
         if selected_features:
-            result["warnings"].append(
-                "Projected {} selected PLATEAU/CAD feature(s) from layer {}.".format(
+            # Informational, not a warning: projecting the selection is the
+            # documented behaviour.
+            notes.append(
+                "Projected {} selected feature(s) of {}.".format(
                     len(selected_features), layer_name
                 )
             )
@@ -1146,7 +1535,9 @@ class SectionGeoreferencerDock(QDockWidget):
             result["summary"].get("inside_buffer_vertices", 0),
             _skipped_count(result["summary"]),
             result["warnings"],
-            note=_replaced_note(replaced, layer_name),
+            note=" ".join(
+                note for note in [_replaced_note(replaced, layer_name)] + notes if note
+            ) or None,
         )
 
     def _clear_projected_overlay(self):
@@ -1315,17 +1706,18 @@ class SectionGeoreferencerDock(QDockWidget):
         if self.transform_result is not None:
             gcp_residuals = self.transform_result.get("residuals") or []
         try:
-            export_section_analysis_package(
-                output_dir,
-                self.canvas,
-                package_config,
-                self._gps_records(),
-                self._plateau_records(),
-                self._plateau_segments(),
-                projection_summary,
-                gcp_residuals,
-                package_files,
-            )
+            with _busy():
+                export_section_analysis_package(
+                    output_dir,
+                    self.canvas,
+                    package_config,
+                    self._gps_records(),
+                    self._plateau_records(),
+                    self._plateau_segments(),
+                    projection_summary,
+                    gcp_residuals,
+                    package_files,
+                )
         except (OSError, ValueError) as exc:
             self._warn("Could not export section analysis package: {}".format(exc))
             return
@@ -1390,6 +1782,7 @@ class SectionGeoreferencerDock(QDockWidget):
             load_warnings.append("Previous PLATEAU reference was cleared.")
         self._clear_section_dependents()
         self._clear_section()
+        self._clear_building()
         section = data.get("section") or {}
         p0 = section.get("p0")
         p1 = section.get("p1")
@@ -1482,10 +1875,10 @@ class SectionGeoreferencerDock(QDockWidget):
                 self._load_image(resolved)
             else:
                 self.canvas.clear_image()
-                self.canvas.draw_gcp_markers(self.gcps)
+                self._redraw_gcp_marks()
                 load_warnings.append("Image path in config does not exist: {}".format(resolved))
         else:
-            self.canvas.draw_gcp_markers(self.gcps)
+            self._redraw_gcp_marks()
         self._update_reference_overlay()
         self._update_workflow_state()
         if load_warnings:
@@ -1584,29 +1977,34 @@ class SectionGeoreferencerDock(QDockWidget):
         )
         cleared = []
         if has_reference:
-            cleared.append("the PLATEAU reference")
+            cleared.append("PLATEAU reference")
         if clears_gcps:
-            cleared.append("the GCPs and transform")
+            cleared.append("GCPs and transform")
         if self._has_projection():
-            cleared.append("the projected overlay")
+            cleared.append("Projected overlay")
         if not cleared:
             self.applied_settings = dict(settings) if self.gcps else None
             return True
         names = {
             "z_offset": "z offset",
-            "buffer_width": "buffer",
-            "z_field": "height field",
+            "buffer_width": "Buffer",
+            "z_field": "Height field",
         }
+        changes = "\n".join(
+            "{}: {} → {}".format(
+                names[key],
+                _setting_text(applied.get(key)),
+                _setting_text(settings.get(key)),
+            )
+            for key in changed
+        )
         self._reconciling_settings = True
         try:
             accepted = self._confirm(
                 "Change projection settings",
-                "The {} changed. {} {} made with the previous value.\n\n"
-                "Apply the new value and clear {}?".format(
-                    " and ".join(names[key] for key in changed),
-                    _capitalize(_join_words(cleared)),
-                    "was" if len(cleared) == 1 else "were",
-                    _join_words(cleared),
+                "{}\n\nThese were made with the previous value and will be "
+                "cleared:\n\n{}\n\nApply the new value?".format(
+                    changes, _bullets(cleared)
                 ),
             )
             if not accepted:
@@ -1622,7 +2020,11 @@ class SectionGeoreferencerDock(QDockWidget):
             self._reconciling_settings = False
         self.applied_settings = dict(settings) if self.gcps else None
         self._update_workflow_state()
-        self._info("Projection settings changed; {} cleared.".format(_join_words(cleared)))
+        self._info("Projection settings changed. Cleared: {}.".format(", ".join(cleared)))
+        if has_reference and self.building_fids:
+            # Re-project the building with the new value once the current
+            # action (which is still reading the settings) has finished.
+            QTimer.singleShot(0, self._load_plateau_reference)
         return True
 
     def _show_settings_in_edits(self, settings):
@@ -1695,94 +2097,93 @@ class SectionGeoreferencerDock(QDockWidget):
             self.image_info_label.setStyleSheet("font-size: 11px; color: palette(dark);")
 
     def _update_workflow_state(self):
-        step1_ok = self.section_p0 is not None and self.section_p1 is not None
-        step2_ok = self.canvas.has_image()
-        step3_ok = self.transform_result is not None
+        section_ok = self.section_p0 is not None and self.section_p1 is not None
+        image_ok = self.canvas.has_image()
+        transform_ok = self.transform_result is not None
+        has_ref = bool(self.reference_records or self.reference_segments)
         n_gcps = len(self.gcps)
 
-        if step1_ok and self.section_length is not None:
-            self._section_group_box.setTitle(
-                "{} 1. Section line  [{:.1f} m]".format(_STEP_DONE, self.section_length)
-            )
-        else:
-            self._section_group_box.setTitle("{} 1. Section line".format(_STEP_BULLET))
+        def title(step, done, summary=None):
+            text = "{} {}".format(_STEP_DONE if done else _STEP_BULLET, _STEP_TITLES[step])
+            if summary:
+                text += "  [{}]".format(summary)
+            self.steps.setItemText(step, text)
 
-        has_ref = bool(self.reference_records or self.reference_segments)
-        if has_ref:
-            n_ref = len(self.reference_records)
-            self._reference_group_box.setTitle(
-                "{} 2. PLATEAU reference  [{} vtx]".format(_STEP_DONE, n_ref)
+        has_building = bool(self.building_fids)
+        if has_building and has_ref:
+            building_summary = "{} bldg, {} vtx".format(
+                len(self.building_fids), len(self.reference_records)
             )
+        elif has_building:
+            building_summary = "{} bldg".format(len(self.building_fids))
         else:
-            self._reference_group_box.setTitle("{} 2. PLATEAU reference".format(_STEP_BULLET))
-
-        self.reference_overlay_check.setEnabled(has_ref and step3_ok)
-
-        if step2_ok:
-            self._image_group_box.setTitle("{} 3. Section image  [loaded]".format(_STEP_DONE))
-        else:
-            self._image_group_box.setTitle("{} 3. Section image".format(_STEP_BULLET))
-
-        if step3_ok:
-            self._gcp_group_box.setTitle(
-                "{} 4. GCP manager  [{} pts, RMS={}]".format(
-                    _STEP_DONE, n_gcps, _rms_text(self.transform_result.get("rms"))
-                )
+            building_summary = None
+        title(STEP_BUILDING, has_building, building_summary)
+        title(
+            STEP_SECTION,
+            section_ok and self.section_length is not None,
+            "{:.1f} m".format(self.section_length) if section_ok and self.section_length else None,
+        )
+        self.reference_overlay_check.setEnabled(has_ref and transform_ok)
+        title(STEP_IMAGE, image_ok, "loaded" if image_ok else None)
+        if transform_ok:
+            gcp_summary = "{} GCPs, RMS {} m".format(
+                n_gcps, _rms_text(self.transform_result.get("rms"))
             )
-        elif n_gcps > 0:
-            self._gcp_group_box.setTitle(
-                "{} 4. GCP manager  [{}/{} pts]".format(_STEP_BULLET, n_gcps, max(3, n_gcps))
-            )
+        elif n_gcps:
+            gcp_summary = "{}/3 GCPs".format(n_gcps)
         else:
-            self._gcp_group_box.setTitle("{} 4. GCP manager".format(_STEP_BULLET))
+            gcp_summary = None
+        title(STEP_GCP, transform_ok, gcp_summary)
 
         n_gps = len(self._gps_records())
         n_plateau = len(self._plateau_records())
-        if n_gps or n_plateau:
-            parts = []
-            if n_gps:
-                parts.append("{} GPS".format(n_gps))
-            if n_plateau:
-                parts.append("{} PLATEAU".format(n_plateau))
-            self._projection_group_box.setTitle(
-                "{} 5. Layer projection  [{}]".format(_STEP_DONE, ", ".join(parts))
-            )
-        else:
-            self._projection_group_box.setTitle("{} 5. Layer projection".format(_STEP_BULLET))
+        parts = []
+        if n_gps:
+            parts.append("{} GPS".format(n_gps))
+        if n_plateau:
+            parts.append("{} vtx".format(n_plateau))
+        title(STEP_PROJECTION, bool(parts), ", ".join(parts) or None)
+        title(STEP_EXPORT, False)
 
         self.hint_label.setText(
             "Next: {}".format(
-                self._next_step_hint(step1_ok, step2_ok, step3_ok, has_ref, n_gcps)
+                self._next_step_hint(section_ok, image_ok, transform_ok, has_ref, n_gcps)
             )
         )
 
-    def _next_step_hint(self, step1_ok, step2_ok, step3_ok, has_ref, n_gcps):
-        if not step1_ok:
+    def _next_step_hint(self, section_ok, image_ok, transform_ok, has_ref, n_gcps):
+        # Same order as the numbered steps in the sidebar.
+        if not self.building_fids:
             return (
-                "define the section line — click 'Draw on map' and pick P0 and P1 "
-                "on the QGIS map canvas."
+                "step 1 — click 'Pick on map', then click the PLATEAU building on "
+                "the QGIS map."
             )
-        if not step2_ok:
-            return "load the scanned section drawing with 'Load image' in step 3."
+        if not section_ok:
+            return (
+                "step 2 — draw the section line through the building: click "
+                "'Draw on map', then P0 (left end of the drawing) and P1 (right end)."
+            )
         if not has_ref:
             return (
-                "select the target PLATEAU/CAD feature in the QGIS layer, then "
-                "click 'Load selected' in step 2 to get snap targets."
+                "the section line misses the picked building — redraw it through "
+                "the building (step 2) or widen the buffer (step 5)."
             )
-        if not step3_ok:
+        if not image_ok:
+            return "step 3 — load the scanned section drawing with 'Load image'."
+        if not transform_ok:
             return (
-                "add {} more GCP(s): click a point on the section image (left), "
-                "click the matching point on the PLATEAU reference (right), then "
-                "'Add GCP'. The transform is computed automatically at 3.".format(
-                    max(0, 3 - n_gcps)
-                )
+                "step 4 — add {} more GCP(s): click a point on the section image "
+                "(left), click the matching point on the PLATEAU reference "
+                "(right), then 'Add GCP'. The transform is computed at 3; add a "
+                "4th to check its accuracy.".format(max(0, 3 - n_gcps))
             )
         if not self._has_projection():
             return (
-                "activate a GPS or PLATEAU/CAD layer in the QGIS layer panel and "
-                "project it in step 5."
+                "step 5 — activate a GPS or PLATEAU/CAD layer in the QGIS layer "
+                "panel and project it."
             )
-        return "export the overlay PNG or the full analysis package in step 6."
+        return "step 6 — export the overlay PNG or the full analysis package."
 
     def _update_gcp_table(self):
         residuals = []
@@ -1790,18 +2191,23 @@ class SectionGeoreferencerDock(QDockWidget):
             residuals = self.transform_result.get("residuals") or []
         self.gcp_table.setRowCount(len(self.gcps))
         for row, gcp in enumerate(self.gcps):
+            residual = _residual_value(residuals, row)
             cells = [
-                _format_float(gcp["u"]),
-                _format_float(gcp["v"]),
-                _format_float(gcp["s"]),
-                _format_float(gcp["z"]),
-                _residual_text(residuals, row),
+                "{:.1f}".format(float(gcp["u"])),
+                "{:.1f}".format(float(gcp["v"])),
+                _format_m(gcp["s"]),
+                _format_m(gcp["z"]),
+                "-" if residual is None else _format_m(residual),
             ]
             for column, text in enumerate(cells):
                 item = QTableWidgetItem(text)
                 item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                if column == 4 and residual is not None:
+                    colors = _QUALITY_COLORS[_fit_quality(residual)]
+                    item.setBackground(QBrush(QColor(colors[0])))
+                    item.setForeground(QBrush(QColor(colors[1])))
                 self.gcp_table.setItem(row, column, item)
-        self.gcp_table.resizeColumnsToContents()
 
     def _on_gcp_selection_changed(self):
         # Also reached while the table is being rebuilt, including during
@@ -1841,12 +2247,23 @@ class SectionGeoreferencerDock(QDockWidget):
                 "font-size: 11px; color: palette(dark); padding: 3px 6px;"
             )
         else:
-            self.rms_label.setText(
-                "RMS: {}".format(_rms_text(self.transform_result.get("rms")))
-            )
+            rms = self.transform_result.get("rms")
+            if len(self.gcps) == 3:
+                # Three points always fit an affine exactly, so RMS says nothing.
+                self.rms_label.setText(
+                    "RMS: {} m — 3 GCPs fit exactly; add a 4th to check accuracy".format(
+                        _rms_text(rms)
+                    )
+                )
+                colors = _QUALITY_COLORS[None]
+            else:
+                self.rms_label.setText("RMS: {} m".format(_rms_text(rms)))
+                colors = _QUALITY_COLORS[_fit_quality(rms)]
             self.rms_label.setStyleSheet(
-                "font-size: 11px; font-weight: bold; color: #0F6E56;"
-                "background-color: #E1F5EE; padding: 2px 6px; border-radius: 3px;"
+                "font-size: 11px; font-weight: bold; color: {};"
+                "background-color: {}; padding: 2px 6px; border-radius: 3px;".format(
+                    colors[1], colors[0]
+                )
             )
             deformation = self.transform_result.get("deformation")
             if deformation is None:
@@ -1923,22 +2340,23 @@ class SectionGeoreferencerDock(QDockWidget):
             raise ValueError("{} must be a number.".format(label)) from exc
 
     def _info(self, message):
+        # Routine feedback stays in this window; the QGIS message bar is only
+        # used for warnings so that it is not flooded on every click.
         self.status_label.setText(message)
         self.status_label.setStyleSheet(
             "padding: 6px 12px; font-size: 12px;"
-            "border-left: 3px solid #1D9E75;"
+            "border-left: 4px solid #1D9E75;"
             "background-color: palette(window);"
-            "color: #085041;"
+            "color: palette(text);"
         )
-        self._push_message(message, Qgis.Info)
 
     def _warn(self, message):
-        self.status_label.setText(message)
+        self.status_label.setText("⚠ " + message)
         self.status_label.setStyleSheet(
-            "padding: 6px 12px; font-size: 12px;"
-            "border-left: 3px solid #BA7517;"
+            "padding: 6px 12px; font-size: 12px; font-weight: bold;"
+            "border-left: 4px solid #BA7517;"
             "background-color: palette(window);"
-            "color: #854F0B;"
+            "color: palette(text);"
         )
         self._push_message(message, Qgis.Warning)
 
@@ -1982,14 +2400,124 @@ def _same_xy(a, b):
     )
 
 
-def _join_words(items):
-    if len(items) <= 1:
-        return "".join(items)
-    return "{} and {}".format(", ".join(items[:-1]), items[-1])
+_NO_PIXEL_TEXT = "Picked pixel: - (click the section image)"
+_NO_BUILDING_TEXT = "No building yet. Click 'Pick on map', then click the building on the QGIS map."
+_NO_REFERENCE_TEXT = "The reference section appears once the section line (step 2) is drawn."
 
 
-def _capitalize(text):
-    return text[:1].upper() + text[1:]
+def _polygon_layer_filter():
+    layer_filter = getattr(Qgis, "LayerFilter", None)
+    if layer_filter is not None:
+        return layer_filter.PolygonLayer
+    return QgsMapLayerProxyModel.PolygonLayer
+
+
+def _building_summary(layer, fids):
+    """One line describing the picked building(s)."""
+    if len(fids) != 1:
+        return "{} buildings picked in {}.".format(len(fids), layer.name())
+    try:
+        feature = layer.getFeature(fids[0])
+    except Exception:
+        return "1 building picked in {}.".format(layer.name())
+    names = feature.fields().names()
+
+    def value(*candidates):
+        for candidate in candidates:
+            if candidate in names:
+                item = feature[candidate]
+                if item is not None and str(item) not in ("", "NULL"):
+                    return item
+        return None
+
+    parts = []
+    identifier = value("name", "buildingID", "gml_id", "id")
+    if identifier is not None:
+        parts.append(str(identifier))
+    height = value("measuredHeight", "bldg_measuredHeight", "height")
+    if height is not None:
+        try:
+            parts.append("{:.1f} m".format(float(height)))
+        except (TypeError, ValueError):
+            pass
+    storeys = value("storeysAboveGround")
+    if storeys is not None:
+        parts.append("{} floors".format(storeys))
+    detail = " · ".join(parts) if parts else "feature {}".format(fids[0])
+    return "Picked: {} ({}).".format(detail, layer.name())
+
+# (background, foreground) per fit quality; explicit pairs stay readable in
+# light and dark themes.
+_QUALITY_COLORS = {
+    "good": ("#E1F5EE", "#0F6E56"),
+    "fair": ("#FAEEDA", "#854F0B"),
+    "poor": ("#FBE3E3", "#A32D2D"),
+    None: ("#ECECEC", "#444444"),
+}
+
+
+def _fit_quality(value):
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(value):
+        return None
+    if value <= RMS_GOOD_M:
+        return "good"
+    if value <= RMS_FAIR_M:
+        return "fair"
+    return "poor"
+
+
+@contextmanager
+def _busy():
+    """Wait cursor while the UI thread is busy (projection, export, loading)."""
+    QApplication.setOverrideCursor(QCursor(Qt.WaitCursor))
+    try:
+        yield
+    finally:
+        QApplication.restoreOverrideCursor()
+
+
+def _readout_label():
+    label = QLabel("")
+    # Long readouts must not set the window's minimum width.
+    label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+    label.setStyleSheet(
+        "font-size: 11px; color: palette(dark); padding: 2px 6px;"
+        "border-top: 1px solid palette(mid);"
+    )
+    return label
+
+
+def _format_m(value):
+    """Metres for display and the s/z edits: millimetre precision."""
+    try:
+        return "{:.3f}".format(float(value))
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _format_coord(value):
+    """Map coordinates without float noise (micrometre precision)."""
+    try:
+        text = "{:.6f}".format(float(value)).rstrip("0").rstrip(".")
+    except (TypeError, ValueError):
+        return str(value)
+    return "0" if text in ("-0", "") else text
+
+
+def _bullets(items):
+    return "\n".join("• {}".format(item) for item in items)
+
+
+def _setting_text(value):
+    if value is None or value == "":
+        return "(auto)"
+    if isinstance(value, float):
+        return _format_float(value)
+    return str(value)
 
 
 def _primary_button(text):
@@ -2013,22 +2541,20 @@ def _number_text(value, default):
         return _format_float(default)
 
 
-def _residual_text(residuals, row):
-    """Per-GCP fit error, or '-' when no transform has been computed yet."""
+def _residual_value(residuals, row):
+    """Per-GCP fit error in metres, or None without a transform."""
     if row >= len(residuals):
-        return "-"
+        return None
     residual = residuals[row]
     try:
-        return "{:.4g}".format(
-            math.hypot(float(residual["ds"]), float(residual["dz"]))
-        )
+        return math.hypot(float(residual["ds"]), float(residual["dz"]))
     except (KeyError, TypeError, ValueError):
-        return "-"
+        return None
 
 
 def _rms_text(value):
     try:
-        return "{:.4g}".format(float(value))
+        return "{:.3f}".format(float(value))
     except (TypeError, ValueError):
         return "n/a"
 
@@ -2088,10 +2614,10 @@ class SectionOrientationGuide:
         self.end_marker = self._marker(QgsVertexMarker.ICON_CIRCLE, self._P1_COLOR)
 
         self.start_label = self._label(
-            "断面左  P0  (s=0)", "white", "rgba(25, 113, 194, 235)"
+            "LEFT  P0  (s=0)", "white", "rgba(25, 113, 194, 235)"
         )
         self.end_label = self._label(
-            "断面右  P1  (s=L)", "white", "rgba(217, 95, 14, 235)"
+            "RIGHT  P1  (s=L)", "white", "rgba(217, 95, 14, 235)"
         )
 
         self._bands = (
@@ -2267,6 +2793,40 @@ class SectionOrientationGuide:
             self.canvas.refresh()
         except Exception:
             pass
+
+
+class BuildingPickMapTool(QgsMapToolIdentifyFeature):
+    """Click a building on the map; Shift/Cmd-click adds or removes more."""
+
+    def __init__(self, canvas, layer, picked_callback, finished_callback):
+        super().__init__(canvas, layer)
+        self.picked_callback = picked_callback
+        self.finished_callback = finished_callback
+        self._modifiers = Qt.NoModifier
+        self._hit = False
+        self.featureIdentified[QgsFeature].connect(self._on_identified)
+
+    def canvasReleaseEvent(self, event):
+        if event.button() == Qt.RightButton:
+            self.finished_callback()
+            return
+        if event.button() != Qt.LeftButton:
+            return
+        self._modifiers = event.modifiers()
+        self._hit = False
+        super().canvasReleaseEvent(event)
+        if not self._hit:
+            self.picked_callback(None, self._modifiers)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self.finished_callback()
+
+    def _on_identified(self, feature):
+        if self._hit:
+            return  # overlapping buildings: keep the first one under the cursor
+        self._hit = True
+        self.picked_callback(feature, self._modifiers)
 
 
 class SectionLineMapTool(QgsMapTool):

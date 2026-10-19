@@ -76,14 +76,15 @@ class DockStateTests(unittest.TestCase):
             self.dock.gcp_z_edit.setText(str(z))
             self.dock._add_gcp()
 
-    def load_reference(self):
-        layer = self.layer(
+    def building_layer(self):
+        return self.layer(
             "PolygonZ?crs=" + PROJECTED,
             ["PolygonZ((10 0 0, 80 0 0, 80 0 40, 10 0 40, 10 0 0))"],
         )
-        layer.selectAll()
-        self.iface.layer = layer
-        self.dock._load_selected_plateau_reference()
+
+    def load_reference(self):
+        layer = self.building_layer()
+        self.dock._set_building(layer, [f.id() for f in layer.getFeatures()])
 
     def project_gps(self):
         layer = self.layer("PointZ?crs=" + PROJECTED, ["PointZ(50 1 10)"])
@@ -92,8 +93,8 @@ class DockStateTests(unittest.TestCase):
         return layer
 
     def full_session(self):
-        self.dock._set_section((0.0, 0.0), (100.0, 0.0))
         self.load_reference()
+        self.dock._set_section((0.0, 0.0), (100.0, 0.0))
         self.dock._load_image(self.image_path)
         self.add_gcps()
         self.project_gps()
@@ -130,9 +131,12 @@ class DockStateTests(unittest.TestCase):
         self.assertEqual(len(self.confirm_calls), 1)
         self.assertEqual(self.dock.gcps, [])
         self.assertIsNone(self.dock.transform_result)
-        self.assertEqual(self.dock.reference_records, [])
         self.assertFalse(self.dock._has_projection())
         self.assertEqual(self.dock._build_config()["section"]["p1"], [0.0, 100.0])
+        # The building is re-projected onto the new line: only its x=10 end
+        # lies within the 10 m buffer of the line x=0.
+        self.assertTrue(self.dock.reference_records)
+        self.assertEqual({r["x"] for r in self.dock.reference_records}, {10.0})
 
     def test_declining_keeps_the_old_line_and_results(self):
         self.full_session()
@@ -183,6 +187,27 @@ class DockStateTests(unittest.TestCase):
         self.dock._finish_drawn_section_line(point, point)
         self.assertIsNot(self.iface.canvas.mapTool(), tool)
         self.assertIsNone(self.dock.section_line_tool)
+
+    def test_window_shrinks_to_the_sidebar_while_drawing_on_the_map(self):
+        from qgis.core import QgsPointXY
+
+        self.dock.resize(1200, 700)
+        self.dock.show()
+        before = self.dock.size()
+        self.dock._start_section_line_map_tool()
+        self.assertLess(self.dock.width(), 500)
+        self.dock._finish_drawn_section_line(QgsPointXY(0, 0), QgsPointXY(100, 0))
+        self.assertEqual(self.dock.size(), before)
+        self.dock.hide()
+
+    def test_cancelling_the_map_tool_restores_the_window(self):
+        self.dock.resize(1200, 700)
+        self.dock.show()
+        before = self.dock.size()
+        self.dock._start_section_line_map_tool()
+        self.dock._cancel_drawn_section_line()
+        self.assertEqual(self.dock.size(), before)
+        self.dock.hide()
 
     # projection settings --------------------------------------------------
 
@@ -276,6 +301,193 @@ class DockStateTests(unittest.TestCase):
         self.assertEqual(self.dock.gcps, [])
         self.assertEqual(self.dock.z_offset_edit.text(), "2.5")
         self.assertIn("geographic", self.dock.status_label.text())
+
+
+    def test_gps_projection_honours_the_selection(self):
+        self.full_session()
+        layer = self.layer(
+            "PointZ?crs=" + PROJECTED, ["PointZ(10 1 3)", "PointZ(20 1 3)", "PointZ(30 1 3)"]
+        )
+        layer.selectByIds([next(layer.getFeatures()).id()])
+        self.iface.layer = layer
+        self.dock._project_active_point_layer()
+        self.assertEqual(len(self.dock.gps_results[layer.name()]["records"]), 1)
+
+    # GCP picking flow -------------------------------------------------------
+
+    def test_a_pick_is_used_once(self):
+        self.dock._set_section((0.0, 0.0), (100.0, 0.0))
+        self.dock._load_image(self.image_path)
+        self.assertFalse(self.dock.add_gcp_button.isEnabled())
+        self.dock._on_canvas_clicked(10.0, 20.0)
+        self.dock._on_reference_clicked(1.0, 2.0)
+        self.assertTrue(self.dock.add_gcp_button.isEnabled())
+        self.assertEqual(len(self.dock.canvas.pending_items), 1)
+        self.dock._add_gcp()
+        self.assertEqual(len(self.dock.gcps), 1)
+        self.assertIsNone(self.dock.current_pixel)
+        self.assertEqual(self.dock.gcp_s_edit.text(), "")
+        self.assertFalse(self.dock.add_gcp_button.isEnabled())
+        self.assertEqual(self.dock.canvas.pending_items, [])
+        # A second 'Add GCP' (or a click outside the image) has no pixel to
+        # reuse.
+        self.dock.gcp_s_edit.setText("5")
+        self.dock.gcp_z_edit.setText("6")
+        self.dock._add_gcp()
+        self.assertEqual(len(self.dock.gcps), 1)
+
+    def test_gcp_targets_are_marked_on_the_reference(self):
+        self.full_session()
+        self.assertEqual(len(self.dock.reference_canvas.target_items), 3)
+
+    def test_three_gcps_explain_that_rms_is_not_a_check(self):
+        self.dock._set_section((0.0, 0.0), (100.0, 0.0))
+        self.dock._load_image(self.image_path)
+        self.add_gcps()
+        self.assertIn("add a 4th", self.dock.rms_label.text())
+
+    def test_table_shows_millimetres(self):
+        self.dock._set_section((0.0, 0.0), (100.0, 0.0))
+        self.dock._load_image(self.image_path)
+        self.dock._on_canvas_clicked(10.25, 20.0)
+        self.dock.gcp_s_edit.setText("96.1613676812")
+        self.dock.gcp_z_edit.setText("63.768")
+        self.dock._add_gcp()
+        texts = [self.dock.gcp_table.item(0, c).text() for c in range(4)]
+        self.assertEqual(texts, ["10.2", "20.0", "96.161", "63.768"])
+
+    # messages, hints, titles -------------------------------------------------
+
+    def test_routine_messages_stay_out_of_the_qgis_message_bar(self):
+        self.dock._set_section((0.0, 0.0), (100.0, 0.0))
+        self.dock._load_image(self.image_path)
+        self.assertEqual(self.iface.messages, [])
+        self.dock._add_gcp()  # nothing picked: a warning
+        self.assertEqual(len(self.iface.messages), 1)
+
+    def test_hint_follows_the_step_numbers(self):
+        self.assertIn("step 1", self.dock.hint_label.text())
+        self.load_reference()
+        self.assertIn("step 2", self.dock.hint_label.text())
+        self.dock._set_section((0.0, 0.0), (100.0, 0.0))
+        self.assertIn("step 3", self.dock.hint_label.text())
+
+    def test_steps_show_progress_and_open_the_next_step(self):
+        self.assertEqual(self.dock.steps.currentIndex(), 0)
+        self.load_reference()
+        self.assertTrue(self.dock.steps.itemText(0).startswith("✓ 1. Building"))
+        self.assertEqual(self.dock.steps.currentIndex(), 1)
+        self.dock._set_section((0.0, 0.0), (100.0, 0.0))
+        self.assertTrue(self.dock.steps.itemText(1).startswith("✓ 2. Section line"))
+        self.assertEqual(self.dock.steps.currentIndex(), 2)
+
+    # building first, then the section line -------------------------------
+
+    def test_building_first_then_line_loads_the_reference(self):
+        layer = self.building_layer()
+        fid = next(layer.getFeatures()).id()
+        self.dock._set_building(layer, [fid])
+        self.assertEqual(self.dock.reference_records, [])
+        self.assertEqual(list(layer.selectedFeatureIds()), [fid])
+        self.dock._set_section((0.0, 0.0), (100.0, 0.0))
+        self.assertTrue(self.dock.reference_records)
+        self.assertTrue(self.dock.reference_canvas.has_reference())
+
+    def test_line_after_reference_reprojects_the_building(self):
+        self.full_session()
+        self.answer = True
+        self.dock._set_section((0.0, -1.0), (100.0, -1.0))
+        self.assertTrue(self.dock.reference_records)
+        self.assertEqual(self.dock.reference_records[0]["d"], 1.0)
+
+    def test_line_that_misses_the_building_says_so(self):
+        self.load_reference()
+        self.dock._set_section((0.0, 500.0), (100.0, 500.0))
+        self.assertEqual(self.dock.reference_records, [])
+        self.assertIn("does not pass within", self.dock.status_label.text())
+        self.assertIn("misses the picked building", self.dock.hint_label.text())
+
+    def test_buffer_change_reprojects_the_building(self):
+        from qgis.PyQt.QtWidgets import QApplication
+
+        self.full_session()
+        self.answer = True
+        self.dock.buffer_width_edit.setText("2")
+        self.dock._on_projection_setting_edited()
+        QApplication.processEvents()
+        self.assertTrue(self.dock.reference_records)
+        self.assertEqual(self.dock.applied_settings["buffer_width"], 2.0)
+
+    def test_pick_on_map_selects_the_clicked_building(self):
+        from qgis.core import QgsRectangle
+        from qgis.gui import QgsMapMouseEvent
+        from qgis.PyQt.QtCore import QEvent, QPoint, Qt
+
+        layer = self.layer(
+            "Polygon?crs=" + PROJECTED,
+            ["Polygon((0 0, 10 0, 10 10, 0 10, 0 0))", "Polygon((20 0, 30 0, 30 10, 20 10, 20 0))"],
+        )
+        canvas = self.iface.canvas
+        self.iface.window.resize(600, 400)
+        self.iface.window.show()
+        canvas.setDestinationCrs(layer.crs())
+        canvas.setLayers([layer])
+        canvas.setExtent(QgsRectangle(-5, -15, 35, 25))
+        canvas.refresh()
+        canvas.waitWhileRendering()
+        self.dock.building_layer_combo.setLayer(layer)
+        self.dock._start_building_pick()
+        tool = self.dock.building_pick_tool
+        self.assertIs(canvas.mapTool(), tool)
+
+        def click(x, y, modifiers=Qt.NoModifier):
+            pixel = canvas.mapSettings().mapToPixel().transform(x, y)
+            event = QgsMapMouseEvent(
+                canvas, QEvent.MouseButtonRelease, QPoint(int(pixel.x()), int(pixel.y())),
+                Qt.LeftButton, Qt.LeftButton, modifiers,
+            )
+            tool.canvasReleaseEvent(event)
+
+        ids = [f.id() for f in layer.getFeatures()]
+        click(25, 5, Qt.ShiftModifier)
+        self.assertEqual(self.dock.building_fids, [ids[1]])
+        self.assertIs(canvas.mapTool(), tool)  # Shift keeps picking
+        click(5, 5)
+        self.assertEqual(self.dock.building_fids, [ids[0]])
+        self.assertIsNot(canvas.mapTool(), tool)
+        self.assertIsNone(self.dock.building_pick_tool)
+        self.iface.window.hide()
+
+    def test_qgis_selection_can_still_be_used(self):
+        layer = self.building_layer()
+        layer.selectAll()
+        self.iface.layer = layer
+        self.dock._use_qgis_selection_as_building()
+        self.assertEqual(len(self.dock.building_fids), 1)
+
+    def test_loading_a_config_clears_the_building(self):
+        self.full_session()
+        path = self.save_config()
+        self.dock._apply_config(self.config_io.load_config(path), path)
+        self.assertEqual(self.dock.building_fids, [])
+
+    def test_section_edits_have_no_float_noise(self):
+        p0 = (-12418.485, -34142.1600002)
+        self.dock._set_section(p0, (-12418.485, -34030.04))
+        self.assertEqual(self.dock.y0_edit.text(), "-34142.16")
+        self.dock._load_image(self.image_path)
+        self.add_gcps()
+        self.dock._use_manual_section()
+        self.assertEqual(self.confirm_calls, [])
+        self.assertEqual(self.dock.section_p0, p0)
+
+    def test_dialog_lists_what_will_be_cleared(self):
+        self.full_session()
+        self.dock.z_offset_edit.setText("1.5")
+        self.dock._on_projection_setting_edited()
+        text = self.confirm_calls[0]
+        self.assertIn("z offset: 0 → 1.5", text)
+        self.assertIn("• GCPs and transform", text)
 
 
 if __name__ == "__main__":

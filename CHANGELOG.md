@@ -1,6 +1,57 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 (2026-10-19)
+
+### Changed (UI/UX)
+
+- The building comes first: step 1 picks the PLATEAU/CAD building with **Pick
+  on map** (one click on the QGIS map, Shift/Cmd-click for more) from a layer
+  list in the plugin, without the QGIS selection tool. Step 2 draws the section
+  line through it, and the PLATEAU reference is projected automatically when
+  the line is set, and again when the line, buffer, z offset, or height field
+  changes. **Use QGIS selection** remains for pre-selected features, and the
+  separate **Load selected** step is gone.
+
+- The window is now a step sidebar (one step expanded at a time, the next one
+  opened when a step is finished) beside full-height section image and PLATEAU
+  reference panels, instead of short canvases above a long scrolling column.
+  The window opens at up to 1280x820, limited to the screen, and shrinks to
+  the sidebar at the screen's right edge while **Draw on map** is active so the
+  always-on-top window does not cover the map.
+- The hint line follows the step numbers (it used to ask for step 3 before
+  step 2), and routine messages no longer go to the QGIS message bar; only
+  warnings do. "Projected N selected features" is no longer shown as a warning.
+- Distances are shown in metres with millimetre precision, pixels with one
+  decimal, and section coordinates without float noise.
+- The confirmation for changing the section line or a projection setting lists
+  the old and new value and, as bullets, what will be cleared.
+- The RMS badge and the residual column are coloured green/amber/red (0.2 m /
+  1 m), and with exactly three GCPs the badge says that the fit is exact and a
+  fourth GCP is needed to check it.
+- Map orientation labels are in English like the rest of the interface.
+- Empty canvases explain what to load, both panels show the coordinates under
+  the pointer, the reference panel has s/z axis ticks, and a wait cursor is
+  shown while projecting, loading, and exporting.
+
+### Fixed (UI/UX)
+
+- Reference snapping preferred the nearest point on an edge over the corner it
+  runs into, so a click a few pixels off a corner slid the GCP target 1-3 m
+  along the wall while the 4-point RMS stayed small. Corners now win, and the
+  snap tolerance is 12 screen pixels at any zoom (it was 12 scene units, which
+  changed with zoom).
+- 'Add GCP' reused the previously picked pixel after a click outside the image
+  or a second press, producing duplicate GCPs (a duplicated pixel made the
+  transform fail). Each pick is now used once, shown as an orange mark on both
+  panels until it is added, and 'Add GCP' is disabled until both are picked.
+  Registered GCP targets are marked on the reference panel too.
+- GCP markers, GPS points, and projected vertices were sized in image pixels
+  and were invisible on a large scan at fit zoom (about 0.2 screen pixels on a
+  600 dpi A3 sheet). They now have a fixed screen size, and the PNG export
+  scales them to the image size.
+- Thin drawing lines broke up or vanished when zoomed out. A downscaled image
+  pyramid is drawn below 50% zoom.
+- GPS projection ignored the feature selection that the README says it honours.
 
 ### Fixed
 

@@ -31,39 +31,62 @@ The plugin adds a toolbar/menu action named **Section Georeferencer**.
 
 ## Basic Workflow
 
-The dock walks through six numbered steps. Each step title shows `✓` and a short
-summary once it is satisfied, and a hint line under the status bar always names
-the next action.
+The window has the six numbered steps in a sidebar on the left, with only the
+step being worked on expanded, and the section image and the PLATEAU reference
+side by side at full height on the right. Each step title shows `✓` and a short
+summary once it is satisfied, finishing a step opens the next one, and a hint
+line under the status bar always names the next action in step order. Routine
+messages stay in the window's status line; only warnings also go to the QGIS
+message bar.
 
 1. Install and enable the plugin.
 2. Load PLATEAU, GPS, or CAD-derived vector layers into QGIS.
 3. Open **Plugins > Section Georeferencer**.
-4. **1. Section line** — define the line with **Draw on map** (two clicks on the
-   QGIS map canvas), **Manual** (the coordinate fields), or **From line** (a
-   selected line feature). P0 is the left end (`s=0`) and P1 is the right end
-   (`s=section length`) of the section-coordinate view. The map keeps these
-   endpoint labels and a P0→P1 arrow visible so the orientation can be checked.
-5. **2. PLATEAU reference** — select the target PLATEAU building feature in the
-   active QGIS layer and click **Load selected**. The reference section appears
-   in the right-hand panel.
+4. **1. Building** — choose the PLATEAU/CAD building layer in the list (polygon
+   layers of the project), click **Pick on map**, and click the building on the
+   QGIS map. Shift-click (or Cmd-click) adds or removes more buildings; Esc or
+   right-click finishes. The picked building is selected in its layer, so it is
+   highlighted on the map and **PLATEAU/CAD** in step 5 projects the same
+   building. **Use QGIS selection** takes the features already selected in the
+   active layer instead.
+5. **2. Section line** — draw the line through the picked building with **Draw
+   on map** (two clicks on the QGIS map canvas), **Manual** (the coordinate
+   fields), or **From line** (a selected line feature). P0 is the left end
+   (`s=0`) and P1 is the right end (`s=section length`) of the section-coordinate
+   view. The map keeps these endpoint labels and a P0→P1 arrow visible so the
+   orientation can be checked. As soon as the line is set, the building is
+   projected onto it and the reference section appears in the right-hand panel
+   with s/z axis ticks; redrawing the line or changing the buffer, z offset, or
+   height field re-projects it. If the line misses the building, the status line
+   says so. While **Pick on map** or **Draw on map** is active the plugin window
+   shrinks to its step sidebar at the right edge of the screen so it does not
+   cover the map, and returns to its size afterwards.
 6. **3. Section image** — load the scanned/paper CAD section drawing
-   (PNG, JPEG, TIFF, or PDF).
-7. **4. GCP manager** — for each GCP, click the CAD image to pick source pixel
-   `(u, v)`, then click the PLATEAU reference to fill target `(s, z)`, then
-   click **Add GCP**. The reference view snaps to projected vertices, segment
-   endpoints, and nearest points on projected segments. Left-dragging either
-   panel pans it; only a click that does not move picks a coordinate.
+   (PNG, JPEG, TIFF, or PDF). Zoomed out, a downscaled copy of the image is
+   drawn so thin drawing lines stay visible.
+7. **4. GCPs** — for each GCP, click the CAD image to pick source pixel
+   `(u, v)` and click the PLATEAU reference to fill target `(s, z)`; both picks
+   are shown with an orange "new" mark until **Add GCP** registers the pair.
+   **Add GCP** is enabled only when both are picked, and each pick is used once.
+   Registered GCPs are numbered red marks on both panels. The reference view
+   snaps to corners (projected vertices and segment endpoints) first and to the
+   nearest point on an edge only when no corner is within 12 screen pixels.
+   Left-dragging either panel pans it; only a click that does not move picks a
+   coordinate. The line under each panel shows the coordinates under the
+   pointer.
 8. The affine transform is computed automatically as soon as 3 GCPs exist, and
    again after every add or delete. **Compute transform** recomputes on demand.
-   The table shows the per-GCP residual so a mis-picked point is easy to spot,
-   and selecting a row rings that GCP on the image.
-9. **5. Layer projection** — project the active GPS point layer or the active
+   Three GCPs always fit exactly, so add a fourth to check the fit. The RMS badge
+   and the per-GCP residual column are green up to 0.2 m, amber up to 1 m, and
+   red above, and selecting a row rings that GCP on the image.
+9. **5. Projection** — project the active GPS point layer or the active
    PLATEAU/CAD vector layer. If features are selected in the active layer, only
    those are projected; otherwise the whole layer is processed. Projecting the
    same layer again **replaces** its previous result rather than appending a
    duplicate copy.
 10. **6. Export** — export the overlaid section as PNG, or export a reproducible
-   section analysis package.
+   section analysis package. Markers in the exported PNG are scaled to the image
+   size so they stay visible at full resolution.
 11. Save or load the JSON configuration as needed.
 
 ## Paper CAD / PLATEAU / GPS Handoff Model
@@ -74,15 +97,16 @@ The intended handoff is:
    Plane Rectangular CS IX (EPSG:6677) for Tokyo. EPSG:6697 is geographic and
    is refused (see CRS Assumptions).
 2. Load the PLATEAU layer into QGIS with normal QGIS tools.
-3. Select the relevant PLATEAU building feature in QGIS.
-4. Define a section line in the QGIS XY map canvas by clicking two points, or
-   use manual/selected-line input. The map drawing tool shows a crosshair
-   marker, previews a dashed line from P0 to the cursor, and follows QGIS
-   snapping settings when snapping is enabled. After the second point, a
+3. In the plugin, click **Pick on map** and click the relevant PLATEAU building
+   on the QGIS map.
+4. Define a section line through it in the QGIS XY map canvas by clicking two
+   points, or use manual/selected-line input. The map drawing tool shows a
+   crosshair marker, previews a dashed line from P0 to the cursor, and follows
+   QGIS snapping settings when snapping is enabled. After the second point, a
    persistent P0→P1 arrow and color-coded endpoint labels show that P0 becomes
    the section view's left end and P1 becomes its right end.
-5. Load the selected PLATEAU building as the reference
-   section in the plugin.
+5. The picked building is projected onto the line and shown as the PLATEAU
+   reference section in the plugin.
 6. Load the scanned CAD section drawing as the section background image.
 7. Use GCPs to fit the CAD image pixel space to PLATEAU-derived section
    coordinates `(s, z)`: click the CAD image for `(u, v)` and click/snapped-pick

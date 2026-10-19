@@ -75,7 +75,15 @@ class SectionGeoreferencerPlugin:
         mac_always_show = getattr(Qt, "WA_MacAlwaysShowToolWindow", None)
         if mac_always_show is not None:
             self.dock.setAttribute(mac_always_show, True)
-        self.dock.resize(1100, 760)
+        # Wide enough for the step sidebar plus two tall canvases, but never
+        # larger than the screen.
+        width, height = 1280, 820
+        screen = self.dock.screen() if hasattr(self.dock, "screen") else None
+        if screen is not None:
+            available = screen.availableGeometry()
+            width = min(width, int(available.width() * 0.9))
+            height = min(height, int(available.height() * 0.9))
+        self.dock.resize(width, height)
 
     def _dock_visibility_changed(self, visible):
         if self.action is not None:

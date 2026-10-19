@@ -1,12 +1,25 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect x="2" y="2" width="60" height="60" rx="8" fill="#2B7BD0" stroke="#1A5FA0" stroke-width="1.5"/>
-  <polyline points="10,48 18,44 24,38 30,42 36,30 42,26 48,28 54,24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="36" cy="30" r="6" fill="none" stroke="#FF6B35" stroke-width="2"/>
-  <line x1="36" y1="22" x2="36" y2="38" stroke="#FF6B35" stroke-width="1.5"/>
-  <line x1="28" y1="30" x2="44" y2="30" stroke="#FF6B35" stroke-width="1.5"/>
-  <line x1="8" y1="52" x2="56" y2="52" stroke="white" stroke-width="1" stroke-dasharray="3,2" opacity="0.4"/>
-  <line x1="10" y1="50" x2="10" y2="54" stroke="white" stroke-width="1" opacity="0.5"/>
-  <line x1="54" y1="50" x2="54" y2="54" stroke="white" stroke-width="1" opacity="0.5"/>
-  <line x1="12" y1="56" x2="52" y2="56" stroke="white" stroke-width="0.8" opacity="0.35"/>
-  <polyline points="49,54.5 52,56 49,57.5" fill="none" stroke="white" stroke-width="0.8" opacity="0.35"/>
+  <!-- Section Georeferencer: a building cross-section (the scanned drawing)
+       pinned to PLATEAU by two GCP crosshairs. -->
+  <rect x="2" y="2" width="60" height="60" rx="10" fill="#2B7BD0" stroke="#1A5FA0" stroke-width="1.5"/>
+  <!-- floor lines of the section drawing -->
+  <g stroke="#FFFFFF" stroke-width="1.6" opacity="0.55">
+    <line x1="17" y1="26" x2="41" y2="26"/>
+    <line x1="17" y1="34" x2="41" y2="34"/>
+    <line x1="17" y1="42" x2="49" y2="42"/>
+  </g>
+  <!-- building section outline: tower, rooftop structure, low podium -->
+  <path d="M17 50 V18 H25 V11 H33 V18 H41 V34 H49 V50"
+        fill="none" stroke="#FFFFFF" stroke-width="3.6" stroke-linejoin="round" stroke-linecap="round"/>
+  <!-- ground line -->
+  <line x1="9" y1="50" x2="55" y2="50" stroke="#FFFFFF" stroke-width="3.6" stroke-linecap="round"/>
+  <!-- GCP crosshairs on two corners -->
+  <g fill="none" stroke="#FF8A3D" stroke-width="2.6" stroke-linecap="round">
+    <circle cx="17" cy="50" r="5.5"/>
+    <line x1="17" y1="42" x2="17" y2="58"/>
+    <line x1="9" y1="50" x2="25" y2="50"/>
+    <circle cx="41" cy="18" r="5.5"/>
+    <line x1="41" y1="10" x2="41" y2="26"/>
+    <line x1="33" y1="18" x2="49" y2="18"/>
+  </g>
 </svg>
