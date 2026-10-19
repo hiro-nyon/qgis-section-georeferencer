@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.2 (2026-10-19)
+## 0.2.4 (2026-10-19)
 
 ### Fixed
 
@@ -8,6 +8,27 @@
   object instead of the first overlapping feature (often LOD1). The UI shows
   the selected LOD; selection toggling resolves to the same object and clearing
   the last building also clears its reference section.
+- Added one regression scenario covering mixed LODs, distinct buildings and
+  parts, reference geometry, and selection toggling (51 tests in total).
+
+## 0.2.3 (2026-10-19)
+
+### Changed
+
+- Consolidated tests around data integrity and user workflows: 122 test methods
+  reduced to 50, retaining regression checks for the eight publication-review
+  findings. Removed cosmetic and duplicate checks; release checks now run in
+  the ZIP smoke test.
+
+### Fixed
+
+- Canceling section-line drawing deactivates the tool even when no previous
+  map tool was active.
+
+## 0.2.2 (2026-10-19)
+
+### Fixed
+
 - GCP fitting, deletion and clearing invalidate both GPS and PLATEAU projected
   results, preventing old pixels from being exported with a new transform.
 - Section GeoTIFFs use a local engineering CRS in metres. The original map CRS
@@ -25,14 +46,10 @@
   the original-to-exported mapping is recorded in the projection summary.
 - Pending settings are checked again after applying changes that may clear the
   transform, before projection or package export proceeds.
-- Canceling section-line drawing deactivates the tool even when no previous
-  map tool was active.
 
 ### Added
 
 - Regression tests for all eight review findings and adjacent failure paths.
-- Consolidated tests around data integrity and user workflows; removed cosmetic
-  and duplicate checks, and combined release checks with the ZIP smoke test.
 - QGIS/GDAL CI that rejects skipped tests, deterministic ZIP packaging with a
   SHA256 checksum, and an isolated plugin-loader/export smoke test of the ZIP.
 - A synthetic project, section image, GCP config, building/GPS layers and

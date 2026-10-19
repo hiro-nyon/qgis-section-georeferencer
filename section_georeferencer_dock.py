@@ -74,7 +74,7 @@ from .transforms import (
 
 
 PLUGIN_NAME = "Section Georeferencer"
-PLUGIN_VERSION = "0.2.2"
+PLUGIN_VERSION = "0.2.4"
 
 _STEP_DONE = "✓"
 _STEP_BULLET = "•"

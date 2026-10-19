@@ -1,6 +1,6 @@
 {
   "plugin": "Section Georeferencer",
-  "version": "0.2.2",
+  "version": "0.2.4",
   "crs": "EPSG:6677",
   "section": {
     "p0": [
