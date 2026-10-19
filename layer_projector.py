@@ -39,6 +39,11 @@ PLATEAU_PRESERVE_FIELDS = (
     "storeysBelowGround",
 )
 
+POINT_RECORD_FIELDS = {
+    "type", "source_fid", "source_layer_id", "x", "y", "z_raw", "z_section",
+    "s", "d", "u", "v", "inside_buffer", "z_source", "layer_name",
+}
+
 
 def project_point_layer(
     layer,
@@ -72,9 +77,15 @@ def project_point_layer(
     if not _is_geometry_type(layer, QgsWkbTypes.PointGeometry):
         return _point_result(records, summary, ["Active layer is not a point layer."])
 
-    transformer = _coordinate_transform(layer, project_crs, warnings)
+    try:
+        transformer = _coordinate_transform(layer, project_crs, warnings)
+    except ValueError as exc:
+        result = _point_result(records, summary, [str(exc)])
+        result["error"] = str(exc)
+        return result
     layer_name = _layer_name(layer)
     field_names = _field_names(layer)
+    attribute_map = _attribute_names(field_names, POINT_RECORD_FIELDS)
     z_lookup = _z_lookup(
         z_field, field_names, layer_name, warnings, overrides_geometry_z=True
     )
@@ -109,6 +120,7 @@ def project_point_layer(
             record = {
                 "type": "point",
                 "source_fid": feature.id(),
+                "source_layer_id": layer.id(),
                 "x": x,
                 "y": y,
                 "z_raw": z,
@@ -121,9 +133,11 @@ def project_point_layer(
                 "z_source": z_source,
                 "layer_name": layer_name,
             }
-            record.update(_all_attributes(feature, field_names, record))
+            record.update(_all_attributes(feature, attribute_map))
             records.append(record)
-    return _point_result(records, summary, _dedupe(warnings))
+    result = _point_result(records, summary, _dedupe(warnings))
+    result["attribute_map"] = attribute_map
+    return result
 
 
 def project_vector_layer_vertices(
@@ -161,7 +175,12 @@ def project_vector_layer_vertices(
     ):
         return _vector_result(records, segments, summary, ["Unsupported geometry type."])
 
-    transformer = _coordinate_transform(layer, project_crs, warnings)
+    try:
+        transformer = _coordinate_transform(layer, project_crs, warnings)
+    except ValueError as exc:
+        result = _vector_result(records, segments, summary, [str(exc)])
+        result["error"] = str(exc)
+        return result
     layer_name = _layer_name(layer)
     field_names = _field_names(layer)
     # A 3D building keeps its geometry Z even with a height field named: a
@@ -216,6 +235,7 @@ def project_vector_layer_vertices(
             record = {
                 "type": "vertex",
                 "source_fid": feature.id(),
+                "source_layer_id": layer.id(),
                 "geometry_type": geometry_type_name,
                 "x": x,
                 "y": y,
@@ -243,6 +263,7 @@ def project_vector_layer_vertices(
                 segments.append(
                     {
                         "source_fid": feature.id(),
+                        "source_layer_id": layer.id(),
                         "layer_name": layer_name,
                         "u0": last_record["u"],
                         "v0": last_record["v"],
@@ -270,18 +291,25 @@ def _is_geometry_type(layer, expected):
 
 def _coordinate_transform(layer, project_crs, warnings):
     layer_crs = layer.crs()
-    if not layer_crs.isValid() or not project_crs.isValid() or layer_crs == project_crs:
+    if not layer_crs.isValid():
+        raise ValueError("Source layer '{}' has no valid CRS. Set its CRS before projecting.".format(_layer_name(layer)))
+    if not project_crs.isValid():
+        raise ValueError("Set a valid project CRS before projecting.")
+    if layer_crs == project_crs:
         return None
     try:
         project = QgsProject.instance()
-        return QgsCoordinateTransform(layer_crs, project_crs, project)
-    except TypeError:
-        return QgsCoordinateTransform(
-            layer_crs, project_crs, QgsCoordinateTransformContext()
-        )
+        try:
+            transform = QgsCoordinateTransform(layer_crs, project_crs, project)
+        except TypeError:
+            transform = QgsCoordinateTransform(
+                layer_crs, project_crs, QgsCoordinateTransformContext()
+            )
+        if not transform.isValid():
+            raise ValueError("Coordinate transform is invalid.")
+        return transform
     except Exception as exc:
-        warnings.append("Could not create coordinate transform: {}".format(exc))
-        return None
+        raise ValueError("Could not create coordinate transform: {}".format(exc)) from exc
 
 
 def _transform_xy(x, y, transformer):
@@ -424,16 +452,29 @@ def _selected_attributes(feature, field_names, names):
     return values
 
 
-def _all_attributes(feature, field_names, record):
-    """Every source attribute, renamed with ``src_`` if it would overwrite a
-    computed record key such as ``x`` or ``s``."""
+def _attribute_names(field_names, computed):
+    """Reserve original names first; prefix conflicts until a free name exists."""
+    used = set(computed) | set(field_names)
+    mapping = {}
+    for name in field_names:
+        key = name
+        if name in computed:
+            key = "src_" + name
+            while key in used:
+                key = "src_" + key
+        mapping[name] = key
+        used.add(key)
+    return mapping
+
+
+def _all_attributes(feature, attribute_map):
+    """Carry every attribute using the recorded collision-free name mapping."""
     values = {}
-    for field_name in field_names:
+    for field_name, key in attribute_map.items():
         try:
             value = feature[field_name]
         except Exception:
             continue
-        key = field_name if field_name not in record else "src_" + field_name
         values[key] = _jsonable_value(value)
     return values
 

@@ -64,5 +64,36 @@ class LoadErrorTests(unittest.TestCase):
                 config_io.load_config(path)
 
 
+class ConfigValidationTests(unittest.TestCase):
+    def test_rejects_malformed_nested_values(self):
+        invalid = [
+            {"section": "oops"}, {"height": [1]}, {"projection": "bad"},
+            {"image": {"path": ["scan.png"]}}, {"crs": 6677},
+            {"section": {"p0": [0, 0]}},
+            {"section": {"p0": [0, 0], "p1": [0, 0]}},
+            {"section": {"p0": [0, 0], "p1": [1, float("inf")]}},
+            {"height": {"z_offset": float("nan")}},
+            {"projection": {"buffer_width_m": -1}},
+            {"gcps": "bad"}, {"gcps": [{"u": 1}]},
+            {"transform": {"pixel_to_section": {"s": [1]}}},
+        ]
+        for data in invalid:
+            with self.subTest(data=data), self.assertRaises(ValueError):
+                config_io.validate_config(data)
+
+    def test_rejects_inconsistent_inverse(self):
+        with self.assertRaises(ValueError):
+            config_io.validate_config({"transform": {
+                "pixel_to_section": {"s": [0, 1, 0], "z": [0, 0, 1]},
+                "section_to_pixel": {"u": [0, 2, 0], "v": [0, 0, 1]},
+            }})
+
+    def test_validator_does_not_mutate_input_and_accepts_partial_config(self):
+        original = {"height": {"z_offset": "2"}}
+        validated = config_io.validate_config(original)
+        self.assertEqual(validated["height"]["z_offset"], 2.0)
+        self.assertEqual(original, {"height": {"z_offset": "2"}})
+
+
 if __name__ == "__main__":
     unittest.main()

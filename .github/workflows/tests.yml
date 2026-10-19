@@ -3,6 +3,10 @@ name: tests
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   unittest:
@@ -17,3 +21,21 @@ jobs:
           python-version: "3.11"
       - run: pip install numpy
       - run: python -m unittest discover -s tests -v
+
+  qgis:
+    runs-on: ubuntu-latest
+    # Official QGIS 3.44 / Ubuntu Noble image; pin the tested image definition.
+    container:
+      image: qgis/qgis:3.44-noble@sha256:5fd101bf5a08bfa2a8bf1f663916a2ec3ea25bf89cd26af236b749fd3c803bbf
+    env:
+      QT_QPA_PLATFORM: offscreen
+      QGIS_PREFIX_PATH: /usr
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/run_qgis_tests.py
+      - run: python3 scripts/build_plugin.py
+      - run: python3 scripts/smoke_test_zip.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: section-georeferencer-installable
+          path: dist/*

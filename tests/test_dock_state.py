@@ -311,7 +311,7 @@ class DockStateTests(unittest.TestCase):
         layer.selectByIds([next(layer.getFeatures()).id()])
         self.iface.layer = layer
         self.dock._project_active_point_layer()
-        self.assertEqual(len(self.dock.gps_results[layer.name()]["records"]), 1)
+        self.assertEqual(len(self.dock.gps_results[layer.id()]["records"]), 1)
 
     # GCP picking flow -------------------------------------------------------
 
@@ -521,6 +521,132 @@ class DockStateTests(unittest.TestCase):
         text = self.confirm_calls[0]
         self.assertIn("z offset: 0 → 1.5", text)
         self.assertIn("• GCPs and transform", text)
+
+
+    def test_gcp_edit_invalidates_both_projection_types_and_reprojection_matches(self):
+        self.full_session()
+        self.iface.layer = self.dock._building_layer()
+        self.dock._project_active_vector_layer()
+        self.assertTrue(self.dock.plateau_results)
+        self.dock.current_pixel = (10.0, 10.0)
+        self.dock.gcp_s_edit.setText("0")
+        self.dock.gcp_z_edit.setText("60")
+        self.dock._add_gcp()
+        self.assertFalse(self.dock._has_projection())
+        self.assertFalse(self.dock.canvas.projected_items)
+        self.project_gps()
+        record = self.dock._gps_records()[0]
+        expected = plugin_module("transforms").section_to_pixel(
+            record["s"], record["z_section"], self.dock.transform_result["section_to_pixel"]
+        )
+        self.assertAlmostEqual(record["u"], expected[0])
+        self.assertAlmostEqual(record["v"], expected[1])
+
+    def test_deleting_or_clearing_gcps_clears_projection(self):
+        self.full_session()
+        self.dock.gcp_table.setCurrentCell(0, 0)
+        self.dock._delete_selected_gcp()
+        self.assertFalse(self.dock._has_projection())
+        self.assertIsNone(self.dock.transform_result)
+        self.full_session()
+        self.dock._clear_gcps()
+        self.assertFalse(self.dock._has_projection())
+
+    def test_failed_fit_clears_projection(self):
+        self.full_session()
+        self.dock.gcps = [{"u": 0, "v": 0, "s": 0, "z": 0}] * 3
+        self.dock._compute_transform()
+        self.assertIsNone(self.dock.transform_result)
+        self.assertFalse(self.dock._has_projection())
+
+    def test_same_names_and_layer_rename_do_not_lose_or_duplicate_rows(self):
+        self.full_session()
+        first = self.iface.layer
+        second = self.layer("PointZ?crs=" + PROJECTED, ["PointZ(70 1 20)"])
+        second.setName(first.name())
+        self.iface.layer = second
+        self.dock._project_active_point_layer()
+        self.assertEqual({r["x"] for r in self.dock._gps_records()}, {50, 70})
+        second.setName("renamed")
+        self.dock._project_active_point_layer()
+        self.assertEqual(len(self.dock._gps_records()), 2)
+        self.assertEqual({r["source_layer_id"] for r in self.dock._gps_records()}, {first.id(), second.id()})
+        summary = self.dock._build_projection_summary("test")
+        self.assertEqual(summary["source_layers"]["gps"], sorted([first.name(), "renamed"]))
+        self.assertEqual(summary["gps"]["processed"], 2)
+
+    def test_same_named_vector_layers_are_distinct(self):
+        self.full_session()
+        for _ in range(2):
+            self.iface.layer = self.building_layer()
+            self.dock._project_active_vector_layer()
+        self.assertEqual(len(self.dock.plateau_results), 2)
+        self.assertEqual(len(self.dock._plateau_records()), 10)
+
+    def test_clear_then_new_image_requires_new_gcps(self):
+        self.full_session()
+        self.dock._clear_image()
+        from qgis.PyQt.QtGui import QImage
+        path = os.path.join(self.tempdir.name, "new.png")
+        QImage(200, 200, QImage.Format_RGB32).save(path)
+        self.dock._load_image(path)
+        self.assertEqual(self.dock.gcps, [])
+        self.assertIsNone(self.dock.transform_result)
+        self.assertFalse(self.dock._package_prerequisites_ok())
+
+    def test_config_without_image_clears_the_canvas(self):
+        self.full_session()
+        data = self.dock._build_config()
+        data["image"]["path"] = ""
+        self.assertTrue(self.dock._apply_config(data, "/tmp/config.json"))
+        self.assertFalse(self.dock.canvas.has_image())
+        self.assertFalse(self.dock._package_prerequisites_ok())
+        # Retained config GCPs must not silently attach to an arbitrary image.
+        self.assertTrue(self.dock._image_replaces_state(self.image_path))
+
+    def test_unreadable_config_image_does_not_keep_previous_image(self):
+        self.full_session()
+        data = self.dock._build_config()
+        path = os.path.join(self.tempdir.name, "broken.png")
+        with open(path, "w") as stream:
+            stream.write("not an image")
+        data["image"]["path"] = path
+        self.assertTrue(self.dock._apply_config(data, "/tmp/config.json"))
+        self.assertFalse(self.dock.canvas.has_image())
+        self.assertIn("could not be loaded", self.dock.status_label.text())
+
+    def test_malformed_config_keeps_the_entire_session(self):
+        self.full_session()
+        before = self.dock._build_config()
+        rows = self.dock._gps_records()
+        for data in ({"section": "oops"}, {"image": {"path": []}}, {"crs": "EPSG:invalid"},
+                     {"gcps": [{"u": 1}]}, {"transform": {"pixel_to_section": {}}}):
+            with self.subTest(data=data):
+                self.assertFalse(self.dock._apply_config(data, "/tmp/bad.json"))
+                self.assertEqual(self.dock._build_config(), before)
+                self.assertEqual(self.dock._gps_records(), rows)
+                self.assertTrue(self.dock.canvas.has_image())
+
+    def test_invalid_source_crs_keeps_previous_projection(self):
+        from qgis.core import QgsCoordinateReferenceSystem
+        self.full_session()
+        previous = self.dock._gps_records()
+        self.iface.layer.setCrs(QgsCoordinateReferenceSystem())
+        self.dock._project_active_point_layer()
+        self.assertEqual(self.dock._gps_records(), previous)
+        self.assertIn("no valid CRS", self.dock.status_label.text())
+
+    def test_pending_offset_edit_cannot_project_with_a_cleared_transform(self):
+        self.full_session()
+        self.dock.z_offset_edit.setText("5")
+        self.dock._project_active_point_layer()
+        self.assertIsNone(self.dock.transform_result)
+        self.assertFalse(self.dock._has_projection())
+
+    def test_non_metric_crs_is_refused(self):
+        self.set_project_crs("EPSG:2263")
+        with self.assertRaises(ValueError):
+            self.dock._set_section((0, 0), (100, 0))
 
 
 if __name__ == "__main__":

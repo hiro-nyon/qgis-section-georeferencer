@@ -1,0 +1,101 @@
+{
+  "plugin": "Section Georeferencer",
+  "version": "0.2.2",
+  "crs": "EPSG:6677",
+  "section": {
+    "p0": [
+      0.0,
+      0.0
+    ],
+    "p1": [
+      100.0,
+      0.0
+    ],
+    "length": 100.0
+  },
+  "image": {
+    "path": "section.png"
+  },
+  "height": {
+    "z_offset": 0.0,
+    "height_datum_note": ""
+  },
+  "projection": {
+    "buffer_width_m": 10.0,
+    "z_field": ""
+  },
+  "gcps": [
+    {
+      "u": 100,
+      "v": 400,
+      "s": 0,
+      "z": 0
+    },
+    {
+      "u": 900,
+      "v": 400,
+      "s": 100,
+      "z": 0
+    },
+    {
+      "u": 900,
+      "v": 80,
+      "s": 100,
+      "z": 40
+    },
+    {
+      "u": 100,
+      "v": 80,
+      "s": 0,
+      "z": 40
+    }
+  ],
+  "transform": {
+    "pixel_to_section": {
+      "s": [
+        -12.499999999999984,
+        0.125,
+        -4.163336342344337e-17
+      ],
+      "z": [
+        49.999999999999986,
+        3.4825385788895556e-17,
+        -0.125
+      ]
+    },
+    "section_to_pixel": {
+      "u": [
+        100.0,
+        8.0,
+        -2.6645352591003757e-15
+      ],
+      "v": [
+        399.9999999999999,
+        2.2288246904893156e-15,
+        -8.0
+      ]
+    },
+    "rms": 1.710536290544959e-14,
+    "deformation": {
+      "scale_u_m_per_px": 0.125,
+      "scale_v_m_per_px": 0.125,
+      "axis_scale_difference_percent": 0.0,
+      "principal_scale_max_m_per_px": 0.125,
+      "principal_scale_min_m_per_px": 0.125,
+      "stretch_ratio": 1.0,
+      "stretch_difference_percent": 0.0,
+      "axis_angle_degrees": 90.00000000000004,
+      "signed_shear_degrees": -4.263256414560601e-14,
+      "shear_degrees": 4.263256414560601e-14,
+      "rotation_degrees": 1.5962781004948723e-14,
+      "area_scale_m2_per_px2": 0.015625,
+      "orientation": "flipped",
+      "warning_thresholds": {
+        "stretch_difference_percent": 20.0,
+        "shear_degrees": 5.0
+      },
+      "warning": false,
+      "warnings": []
+    }
+  }
+}

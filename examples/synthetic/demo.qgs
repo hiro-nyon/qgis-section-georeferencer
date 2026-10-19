@@ -1,0 +1,953 @@
+<?xml version='1.0' encoding='utf-8'?>
+<qgis projectname="" version="3.44.5-Solothurn">
+  <homePath path="" />
+  <title />
+  <transaction mode="Disabled" />
+  <projectFlags set="" />
+  <projectCrs>
+    <spatialrefsys nativeFormat="Wkt">
+      <wkt>PROJCRS["JGD2011 / Japan Plane Rectangular CS IX",BASEGEOGCRS["JGD2011",DATUM["Japanese Geodetic Datum 2011",ELLIPSOID["GRS 1980",6378137,298.257222101,LENGTHUNIT["metre",1]]],PRIMEM["Greenwich",0,ANGLEUNIT["degree",0.0174532925199433]],ID["EPSG",6668]],CONVERSION["Japan Plane Rectangular CS zone IX",METHOD["Transverse Mercator",ID["EPSG",9807]],PARAMETER["Latitude of natural origin",36,ANGLEUNIT["degree",0.0174532925199433],ID["EPSG",8801]],PARAMETER["Longitude of natural origin",139.833333333333,ANGLEUNIT["degree",0.0174532925199433],ID["EPSG",8802]],PARAMETER["Scale factor at natural origin",0.9999,SCALEUNIT["unity",1],ID["EPSG",8805]],PARAMETER["False easting",0,LENGTHUNIT["metre",1],ID["EPSG",8806]],PARAMETER["False northing",0,LENGTHUNIT["metre",1],ID["EPSG",8807]]],CS[Cartesian,2],AXIS["northing (X)",north,ORDER[1],LENGTHUNIT["metre",1]],AXIS["easting (Y)",east,ORDER[2],LENGTHUNIT["metre",1]],USAGE[SCOPE["Cadastre, engineering survey, topographic mapping (large and medium scale)."],AREA["Japan - onshore - Honshu - Tokyo-to. (Excludes offshore island areas of Tokyo-to covered by Japan Plane Rectangular Coordinate System zones XIV, XVIII and XIX)."],BBOX[29.31,138.4,37.98,141.11]],ID["EPSG",6677]]</wkt>
+      <proj4>+proj=tmerc +lat_0=36 +lon_0=139.833333333333 +k=0.9999 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs</proj4>
+      <srsid>28350</srsid>
+      <srid>6677</srid>
+      <authid>EPSG:6677</authid>
+      <description>JGD2011 / Japan Plane Rectangular CS IX</description>
+      <projectionacronym>tmerc</projectionacronym>
+      <ellipsoidacronym>EPSG:7019</ellipsoidacronym>
+      <geographicflag>false</geographicflag>
+    </spatialrefsys>
+  </projectCrs>
+  <verticalCrs>
+    <spatialrefsys nativeFormat="Wkt">
+      <wkt />
+      <proj4 />
+      <srsid>0</srsid>
+      <srid>0</srid>
+      <authid />
+      <description />
+      <projectionacronym />
+      <ellipsoidacronym />
+      <geographicflag>false</geographicflag>
+    </spatialrefsys>
+  </verticalCrs>
+  <elevation-shading-renderer hillshading-is-active="0" light-azimuth="315" edl-is-active="1" light-altitude="45" hillshading-z-factor="1" hillshading-is-multidirectional="0" combined-method="0" edl-distance-unit="0" is-active="0" edl-strength="1000" edl-distance="0.5" />
+  <layer-tree-group>
+    <customproperties>
+      <Option />
+    </customproperties>
+    <layer-tree-layer legend_exp="" providerKey="ogr" expanded="1" patch_size="-1,-1" checked="Qt::Checked" legend_split_behavior="0" id="synthetic_gps_183715d5_8f84_4ab3_aebe_734427fbd7ac" name="synthetic_gps" source="./synthetic_gps.geojson">
+      <customproperties>
+        <Option />
+      </customproperties>
+    </layer-tree-layer>
+    <layer-tree-layer legend_exp="" providerKey="ogr" expanded="1" patch_size="-1,-1" checked="Qt::Checked" legend_split_behavior="0" id="synthetic_building_c66a9924_f65e_4175_889d_7fdf6a305fd3" name="synthetic_building" source="./synthetic_building.geojson">
+      <customproperties>
+        <Option />
+      </customproperties>
+    </layer-tree-layer>
+    <custom-order enabled="0">
+      <item>synthetic_building_c66a9924_f65e_4175_889d_7fdf6a305fd3</item>
+      <item>synthetic_gps_183715d5_8f84_4ab3_aebe_734427fbd7ac</item>
+    </custom-order>
+  </layer-tree-group>
+  <snapping-settings tolerance="12" unit="1" self-snapping="0" mode="2" type="1" scaleDependencyMode="0" enabled="0" minScale="0" maxScale="0" intersection-snapping="0">
+    <individual-layer-settings>
+      <layer-setting tolerance="12" type="1" enabled="1" minScale="0" maxScale="0" id="synthetic_building_c66a9924_f65e_4175_889d_7fdf6a305fd3" units="1" />
+      <layer-setting tolerance="12" type="1" enabled="1" minScale="0" maxScale="0" id="synthetic_gps_183715d5_8f84_4ab3_aebe_734427fbd7ac" units="1" />
+    </individual-layer-settings>
+  </snapping-settings>
+  <relations />
+  <polymorphicRelations />
+  <mapcanvas annotationsVisible="1" name="">
+    <units>meters</units>
+    <extent>
+      <xmin>-10</xmin>
+      <ymin>-10</ymin>
+      <xmax>110</xmax>
+      <ymax>40</ymax>
+    </extent>
+    <rotation>0</rotation>
+    <destinationsrs>
+      <spatialrefsys nativeFormat="Wkt">
+        <wkt>PROJCRS["JGD2011 / Japan Plane Rectangular CS IX",BASEGEOGCRS["JGD2011",DATUM["Japanese Geodetic Datum 2011",ELLIPSOID["GRS 1980",6378137,298.257222101,LENGTHUNIT["metre",1]]],PRIMEM["Greenwich",0,ANGLEUNIT["degree",0.0174532925199433]],ID["EPSG",6668]],CONVERSION["Japan Plane Rectangular CS zone IX",METHOD["Transverse Mercator",ID["EPSG",9807]],PARAMETER["Latitude of natural origin",36,ANGLEUNIT["degree",0.0174532925199433],ID["EPSG",8801]],PARAMETER["Longitude of natural origin",139.833333333333,ANGLEUNIT["degree",0.0174532925199433],ID["EPSG",8802]],PARAMETER["Scale factor at natural origin",0.9999,SCALEUNIT["unity",1],ID["EPSG",8805]],PARAMETER["False easting",0,LENGTHUNIT["metre",1],ID["EPSG",8806]],PARAMETER["False northing",0,LENGTHUNIT["metre",1],ID["EPSG",8807]]],CS[Cartesian,2],AXIS["northing (X)",north,ORDER[1],LENGTHUNIT["metre",1]],AXIS["easting (Y)",east,ORDER[2],LENGTHUNIT["metre",1]],USAGE[SCOPE["Cadastre, engineering survey, topographic mapping (large and medium scale)."],AREA["Japan - onshore - Honshu - Tokyo-to. (Excludes offshore island areas of Tokyo-to covered by Japan Plane Rectangular Coordinate System zones XIV, XVIII and XIX)."],BBOX[29.31,138.4,37.98,141.11]],ID["EPSG",6677]]</wkt>
+        <proj4>+proj=tmerc +lat_0=36 +lon_0=139.833333333333 +k=0.9999 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs</proj4>
+        <srsid>28350</srsid>
+        <srid>6677</srid>
+        <authid>EPSG:6677</authid>
+        <description>JGD2011 / Japan Plane Rectangular CS IX</description>
+        <projectionacronym>tmerc</projectionacronym>
+        <ellipsoidacronym>EPSG:7019</ellipsoidacronym>
+        <geographicflag>false</geographicflag>
+      </spatialrefsys>
+    </destinationsrs>
+    <rendermaptile>0</rendermaptile>
+    <expressionContextScope />
+  </mapcanvas>
+  <main-annotation-layer legendPlaceholderImage="" refreshOnNotifyEnabled="0" refreshOnNotifyMessage="" type="annotation" autoRefreshMode="Disabled" autoRefreshTime="0" minScale="1e+08" maxScale="0" styleCategories="AllStyleCategories" hasScaleBasedVisibilityFlag="0">
+    <id>Annotations_1678c2f5_a21f_4d56_acdf_37ea5dab8261</id>
+    <datasource />
+    <layername>Annotations</layername>
+    <srs>
+      <spatialrefsys nativeFormat="Wkt">
+        <wkt>PROJCRS["JGD2011 / Japan Plane Rectangular CS IX",BASEGEOGCRS["JGD2011",DATUM["Japanese Geodetic Datum 2011",ELLIPSOID["GRS 1980",6378137,298.257222101,LENGTHUNIT["metre",1]]],PRIMEM["Greenwich",0,ANGLEUNIT["degree",0.0174532925199433]],ID["EPSG",6668]],CONVERSION["Japan Plane Rectangular CS zone IX",METHOD["Transverse Mercator",ID["EPSG",9807]],PARAMETER["Latitude of natural origin",36,ANGLEUNIT["degree",0.0174532925199433],ID["EPSG",8801]],PARAMETER["Longitude of natural origin",139.833333333333,ANGLEUNIT["degree",0.0174532925199433],ID["EPSG",8802]],PARAMETER["Scale factor at natural origin",0.9999,SCALEUNIT["unity",1],ID["EPSG",8805]],PARAMETER["False easting",0,LENGTHUNIT["metre",1],ID["EPSG",8806]],PARAMETER["False northing",0,LENGTHUNIT["metre",1],ID["EPSG",8807]]],CS[Cartesian,2],AXIS["northing (X)",north,ORDER[1],LENGTHUNIT["metre",1]],AXIS["easting (Y)",east,ORDER[2],LENGTHUNIT["metre",1]],USAGE[SCOPE["Cadastre, engineering survey, topographic mapping (large and medium scale)."],AREA["Japan - onshore - Honshu - Tokyo-to. (Excludes offshore island areas of Tokyo-to covered by Japan Plane Rectangular Coordinate System zones XIV, XVIII and XIX)."],BBOX[29.31,138.4,37.98,141.11]],ID["EPSG",6677]]</wkt>
+        <proj4>+proj=tmerc +lat_0=36 +lon_0=139.833333333333 +k=0.9999 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs</proj4>
+        <srsid>28350</srsid>
+        <srid>6677</srid>
+        <authid>EPSG:6677</authid>
+        <description>JGD2011 / Japan Plane Rectangular CS IX</description>
+        <projectionacronym>tmerc</projectionacronym>
+        <ellipsoidacronym>EPSG:7019</ellipsoidacronym>
+        <geographicflag>false</geographicflag>
+      </spatialrefsys>
+    </srs>
+    <resourceMetadata>
+      <identifier />
+      <parentidentifier />
+      <language />
+      <type />
+      <title />
+      <abstract />
+      <links />
+      <dates />
+      <fees />
+      <encoding />
+      <crs>
+        <spatialrefsys nativeFormat="Wkt">
+          <wkt />
+          <proj4 />
+          <srsid>0</srsid>
+          <srid>0</srid>
+          <authid />
+          <description />
+          <projectionacronym />
+          <ellipsoidacronym />
+          <geographicflag>false</geographicflag>
+        </spatialrefsys>
+      </crs>
+      <extent />
+    </resourceMetadata>
+    <items />
+    <flags>
+      <Identifiable>1</Identifiable>
+      <Removable>1</Removable>
+      <Searchable>1</Searchable>
+      <Private>0</Private>
+    </flags>
+    <customproperties>
+      <Option />
+    </customproperties>
+    <layerOpacity>1</layerOpacity>
+    <blendMode>0</blendMode>
+    <paintEffect />
+  </main-annotation-layer>
+  <projectlayers>
+    <maplayer simplifyDrawingTol="1" refreshOnNotifyMessage="" labelsEnabled="0" simplifyLocal="1" simplifyDrawingHints="1" legendPlaceholderImage="" maxScale="0" wkbType="MultiPolygonZ" simplifyAlgorithm="0" simplifyMaxScale="1" symbologyReferenceScale="-1" minScale="100000000" hasScaleBasedVisibilityFlag="0" refreshOnNotifyEnabled="0" type="vector" autoRefreshTime="0" styleCategories="AllStyleCategories" readOnly="0" autoRefreshMode="Disabled" geometry="Polygon">
+      <extent>
+        <xmin>0</xmin>
+        <ymin>-2</ymin>
+        <xmax>100</xmax>
+        <ymax>2</ymax>
+      </extent>
+      <wgs84extent>
+        <xmin>139.83333333333300175</xmin>
+        <ymin>35.99998196839352715</ymin>
+        <xmax>139.83444253844834293</xmax>
+        <ymax>36.00001802647828697</ymax>
+      </wgs84extent>
+      <id>synthetic_building_c66a9924_f65e_4175_889d_7fdf6a305fd3</id>
+      <datasource>./synthetic_building.geojson</datasource>
+      <layername>synthetic_building</layername>
+      <srs>
+        <spatialrefsys nativeFormat="Wkt">
+          <wkt>PROJCRS["JGD2011 / Japan Plane Rectangular CS IX",BASEGEOGCRS["JGD2011",DATUM["Japanese Geodetic Datum 2011",ELLIPSOID["GRS 1980",6378137,298.257222101,LENGTHUNIT["metre",1]]],PRIMEM["Greenwich",0,ANGLEUNIT["degree",0.0174532925199433]],ID["EPSG",6668]],CONVERSION["Japan Plane Rectangular CS zone IX",METHOD["Transverse Mercator",ID["EPSG",9807]],PARAMETER["Latitude of natural origin",36,ANGLEUNIT["degree",0.0174532925199433],ID["EPSG",8801]],PARAMETER["Longitude of natural origin",139.833333333333,ANGLEUNIT["degree",0.0174532925199433],ID["EPSG",8802]],PARAMETER["Scale factor at natural origin",0.9999,SCALEUNIT["unity",1],ID["EPSG",8805]],PARAMETER["False easting",0,LENGTHUNIT["metre",1],ID["EPSG",8806]],PARAMETER["False northing",0,LENGTHUNIT["metre",1],ID["EPSG",8807]]],CS[Cartesian,2],AXIS["northing (X)",north,ORDER[1],LENGTHUNIT["metre",1]],AXIS["easting (Y)",east,ORDER[2],LENGTHUNIT["metre",1]],USAGE[SCOPE["Cadastre, engineering survey, topographic mapping (large and medium scale)."],AREA["Japan - onshore - Honshu - Tokyo-to. (Excludes offshore island areas of Tokyo-to covered by Japan Plane Rectangular Coordinate System zones XIV, XVIII and XIX)."],BBOX[29.31,138.4,37.98,141.11]],ID["EPSG",6677]]</wkt>
+          <proj4>+proj=tmerc +lat_0=36 +lon_0=139.833333333333 +k=0.9999 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs</proj4>
+          <srsid>28350</srsid>
+          <srid>6677</srid>
+          <authid>EPSG:6677</authid>
+          <description>JGD2011 / Japan Plane Rectangular CS IX</description>
+          <projectionacronym>tmerc</projectionacronym>
+          <ellipsoidacronym>EPSG:7019</ellipsoidacronym>
+          <geographicflag>false</geographicflag>
+        </spatialrefsys>
+      </srs>
+      <resourceMetadata>
+        <identifier />
+        <parentidentifier />
+        <language />
+        <type>dataset</type>
+        <title />
+        <abstract />
+        <links />
+        <dates />
+        <fees />
+        <encoding />
+        <crs>
+          <spatialrefsys nativeFormat="Wkt">
+            <wkt>PROJCRS["JGD2011 / Japan Plane Rectangular CS IX",BASEGEOGCRS["JGD2011",DATUM["Japanese Geodetic Datum 2011",ELLIPSOID["GRS 1980",6378137,298.257222101,LENGTHUNIT["metre",1]]],PRIMEM["Greenwich",0,ANGLEUNIT["degree",0.0174532925199433]],ID["EPSG",6668]],CONVERSION["Japan Plane Rectangular CS zone IX",METHOD["Transverse Mercator",ID["EPSG",9807]],PARAMETER["Latitude of natural origin",36,ANGLEUNIT["degree",0.0174532925199433],ID["EPSG",8801]],PARAMETER["Longitude of natural origin",139.833333333333,ANGLEUNIT["degree",0.0174532925199433],ID["EPSG",8802]],PARAMETER["Scale factor at natural origin",0.9999,SCALEUNIT["unity",1],ID["EPSG",8805]],PARAMETER["False easting",0,LENGTHUNIT["metre",1],ID["EPSG",8806]],PARAMETER["False northing",0,LENGTHUNIT["metre",1],ID["EPSG",8807]]],CS[Cartesian,2],AXIS["northing (X)",north,ORDER[1],LENGTHUNIT["metre",1]],AXIS["easting (Y)",east,ORDER[2],LENGTHUNIT["metre",1]],USAGE[SCOPE["Cadastre, engineering survey, topographic mapping (large and medium scale)."],AREA["Japan - onshore - Honshu - Tokyo-to. (Excludes offshore island areas of Tokyo-to covered by Japan Plane Rectangular Coordinate System zones XIV, XVIII and XIX)."],BBOX[29.31,138.4,37.98,141.11]],ID["EPSG",6677]]</wkt>
+            <proj4>+proj=tmerc +lat_0=36 +lon_0=139.833333333333 +k=0.9999 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs</proj4>
+            <srsid>28350</srsid>
+            <srid>6677</srid>
+            <authid>EPSG:6677</authid>
+            <description>JGD2011 / Japan Plane Rectangular CS IX</description>
+            <projectionacronym>tmerc</projectionacronym>
+            <ellipsoidacronym>EPSG:7019</ellipsoidacronym>
+            <geographicflag>false</geographicflag>
+          </spatialrefsys>
+        </crs>
+        <extent />
+      </resourceMetadata>
+      <provider encoding="UTF-8">ogr</provider>
+      <vectorjoins />
+      <layerDependencies />
+      <dataDependencies />
+      <expressionfields />
+      <map-layer-style-manager current="default">
+        <map-layer-style name="default" />
+      </map-layer-style-manager>
+      <auxiliaryLayer />
+      <flags>
+        <Identifiable>1</Identifiable>
+        <Removable>1</Removable>
+        <Searchable>1</Searchable>
+        <Private>0</Private>
+      </flags>
+      <temporal endExpression="" durationUnit="min" mode="0" limitMode="0" accumulate="0" startExpression="" enabled="0" startField="" fixedDuration="0" endField="" durationField="">
+        <fixedRange>
+          <start />
+          <end />
+        </fixedRange>
+      </temporal>
+      <elevation showMarkerSymbolInSurfacePlots="0" extrusionEnabled="0" binding="Centroid" type="IndividualFeatures" extrusion="0" clamping="Absolute" symbology="Line" customToleranceEnabled="1" zoffset="0" zscale="1" respectLayerSymbol="1">
+        <data-defined-properties>
+          <Option type="Map">
+            <Option type="QString" name="name" value="" />
+            <Option name="properties" />
+            <Option type="QString" name="type" value="collection" />
+          </Option>
+        </data-defined-properties>
+        <profileLineSymbol>
+          <symbol type="line" force_rhr="0" alpha="1" clip_to_extent="1" is_animated="0" name="" frame_rate="10">
+            <data_defined_properties>
+              <Option type="Map">
+                <Option type="QString" name="name" value="" />
+                <Option name="properties" />
+                <Option type="QString" name="type" value="collection" />
+              </Option>
+            </data_defined_properties>
+            <layer class="SimpleLine" pass="0" locked="0" enabled="1" id="{4aaa0695-77d3-417a-8470-8e65b0ed8a8f}">
+              <Option type="Map">
+                <Option type="QString" name="align_dash_pattern" value="0" />
+                <Option type="QString" name="capstyle" value="square" />
+                <Option type="QString" name="customdash" value="5;2" />
+                <Option type="QString" name="customdash_map_unit_scale" value="3x:0,0,0,0,0,0" />
+                <Option type="QString" name="customdash_unit" value="MM" />
+                <Option type="QString" name="dash_pattern_offset" value="0" />
+                <Option type="QString" name="dash_pattern_offset_map_unit_scale" value="3x:0,0,0,0,0,0" />
+                <Option type="QString" name="dash_pattern_offset_unit" value="MM" />
+                <Option type="QString" name="draw_inside_polygon" value="0" />
+                <Option type="QString" name="joinstyle" value="bevel" />
+                <Option type="QString" name="line_color" value="152,125,183,255,rgb:0.5960784,0.4901961,0.7176471,1" />
+                <Option type="QString" name="line_style" value="solid" />
+                <Option type="QString" name="line_width" value="0.6" />
+                <Option type="QString" name="line_width_unit" value="MM" />
+                <Option type="QString" name="offset" value="0" />
+                <Option type="QString" name="offset_map_unit_scale" value="3x:0,0,0,0,0,0" />
+                <Option type="QString" name="offset_unit" value="MM" />
+                <Option type="QString" name="ring_filter" value="0" />
+                <Option type="QString" name="trim_distance_end" value="0" />
+                <Option type="QString" name="trim_distance_end_map_unit_scale" value="3x:0,0,0,0,0,0" />
+                <Option type="QString" name="trim_distance_end_unit" value="MM" />
+                <Option type="QString" name="trim_distance_start" value="0" />
+                <Option type="QString" name="trim_distance_start_map_unit_scale" value="3x:0,0,0,0,0,0" />
+                <Option type="QString" name="trim_distance_start_unit" value="MM" />
+                <Option type="QString" name="tweak_dash_pattern_on_corners" value="0" />
+                <Option type="QString" name="use_custom_dash" value="0" />
+                <Option type="QString" name="width_map_unit_scale" value="3x:0,0,0,0,0,0" />
+              </Option>
+              <data_defined_properties>
+                <Option type="Map">
+                  <Option type="QString" name="name" value="" />
+                  <Option name="properties" />
+                  <Option type="QString" name="type" value="collection" />
+                </Option>
+              </data_defined_properties>
+            </layer>
+          </symbol>
+        </profileLineSymbol>
+        <profileFillSymbol>
+          <symbol type="fill" force_rhr="0" alpha="1" clip_to_extent="1" is_animated="0" name="" frame_rate="10">
+            <data_defined_properties>
+              <Option type="Map">
+                <Option type="QString" name="name" value="" />
+                <Option name="properties" />
+                <Option type="QString" name="type" value="collection" />
+              </Option>
+            </data_defined_properties>
+            <layer class="SimpleFill" pass="0" locked="0" enabled="1" id="{4f385c5a-4680-4e8f-a683-a0672554c8ff}">
+              <Option type="Map">
+                <Option type="QString" name="border_width_map_unit_scale" value="3x:0,0,0,0,0,0" />
+                <Option type="QString" name="color" value="152,125,183,255,rgb:0.5960784,0.4901961,0.7176471,1" />
+                <Option type="QString" name="joinstyle" value="bevel" />
+                <Option type="QString" name="offset" value="0,0" />
+                <Option type="QString" name="offset_map_unit_scale" value="3x:0,0,0,0,0,0" />
+                <Option type="QString" name="offset_unit" value="MM" />
+                <Option type="QString" name="outline_color" value="109,89,131,255,rgb:0.4257572,0.3501335,0.5125963,1" />
+                <Option type="QString" name="outline_style" value="solid" />
+                <Option type="QString" name="outline_width" value="0.2" />
+                <Option type="QString" name="outline_width_unit" value="MM" />
+                <Option type="QString" name="style" value="solid" />
+              </Option>
+              <data_defined_properties>
+                <Option type="Map">
+                  <Option type="QString" name="name" value="" />
+                  <Option name="properties" />
+                  <Option type="QString" name="type" value="collection" />
+                </Option>
+              </data_defined_properties>
+            </layer>
+          </symbol>
+        </profileFillSymbol>
+        <profileMarkerSymbol>
+          <symbol type="marker" force_rhr="0" alpha="1" clip_to_extent="1" is_animated="0" name="" frame_rate="10">
+            <data_defined_properties>
+              <Option type="Map">
+                <Option type="QString" name="name" value="" />
+                <Option name="properties" />
+                <Option type="QString" name="type" value="collection" />
+              </Option>
+            </data_defined_properties>
+            <layer class="SimpleMarker" pass="0" locked="0" enabled="1" id="{29d8f93f-5b88-4864-9274-e91a63438280}">
+              <Option type="Map">
+                <Option type="QString" name="angle" value="0" />
+                <Option type="QString" name="cap_style" value="square" />
+                <Option type="QString" name="color" value="152,125,183,255,rgb:0.5960784,0.4901961,0.7176471,1" />
+                <Option type="QString" name="horizontal_anchor_point" value="1" />
+                <Option type="QString" name="joinstyle" value="bevel" />
+                <Option type="QString" name="name" value="diamond" />
+                <Option type="QString" name="offset" value="0,0" />
+                <Option type="QString" name="offset_map_unit_scale" value="3x:0,0,0,0,0,0" />
+                <Option type="QString" name="offset_unit" value="MM" />
+                <Option type="QString" name="outline_color" value="109,89,131,255,rgb:0.4257572,0.3501335,0.5125963,1" />
+                <Option type="QString" name="outline_style" value="solid" />
+                <Option type="QString" name="outline_width" value="0.2" />
+                <Option type="QString" name="outline_width_map_unit_scale" value="3x:0,0,0,0,0,0" />
+                <Option type="QString" name="outline_width_unit" value="MM" />
+                <Option type="QString" name="scale_method" value="diameter" />
+                <Option type="QString" name="size" value="3" />
+                <Option type="QString" name="size_map_unit_scale" value="3x:0,0,0,0,0,0" />
+                <Option type="QString" name="size_unit" value="MM" />
+                <Option type="QString" name="vertical_anchor_point" value="1" />
+              </Option>
+              <data_defined_properties>
+                <Option type="Map">
+                  <Option type="QString" name="name" value="" />
+                  <Option name="properties" />
+                  <Option type="QString" name="type" value="collection" />
+                </Option>
+              </data_defined_properties>
+            </layer>
+          </symbol>
+        </profileMarkerSymbol>
+      </elevation>
+      <renderer-v2 forceraster="0" type="singleSymbol" enableorderby="0" symbollevels="0" referencescale="-1">
+        <symbols>
+          <symbol type="fill" force_rhr="0" alpha="1" clip_to_extent="1" is_animated="0" name="0" frame_rate="10">
+            <data_defined_properties>
+              <Option type="Map">
+                <Option type="QString" name="name" value="" />
+                <Option name="properties" />
+                <Option type="QString" name="type" value="collection" />
+              </Option>
+            </data_defined_properties>
+            <layer class="SimpleFill" pass="0" locked="0" enabled="1" id="{55c81c17-3397-4b99-8e5d-f02de63aaace}">
+              <Option type="Map">
+                <Option type="QString" name="border_width_map_unit_scale" value="3x:0,0,0,0,0,0" />
+                <Option type="QString" name="color" value="231,113,72,255,rgb:0.9058824,0.4431373,0.2823529,1" />
+                <Option type="QString" name="joinstyle" value="bevel" />
+                <Option type="QString" name="offset" value="0,0" />
+                <Option type="QString" name="offset_map_unit_scale" value="3x:0,0,0,0,0,0" />
+                <Option type="QString" name="offset_unit" value="MM" />
+                <Option type="QString" name="outline_color" value="35,35,35,255,rgb:0.1372549,0.1372549,0.1372549,1" />
+                <Option type="QString" name="outline_style" value="solid" />
+                <Option type="QString" name="outline_width" value="0.26" />
+                <Option type="QString" name="outline_width_unit" value="MM" />
+                <Option type="QString" name="style" value="solid" />
+              </Option>
+              <data_defined_properties>
+                <Option type="Map">
+                  <Option type="QString" name="name" value="" />
+                  <Option name="properties" />
+                  <Option type="QString" name="type" value="collection" />
+                </Option>
+              </data_defined_properties>
+            </layer>
+          </symbol>
+        </symbols>
+        <rotation />
+        <sizescale />
+        <data-defined-properties>
+          <Option type="Map">
+            <Option type="QString" name="name" value="" />
+            <Option name="properties" />
+            <Option type="QString" name="type" value="collection" />
+          </Option>
+        </data-defined-properties>
+      </renderer-v2>
+      <selection mode="Default">
+        <selectionColor invalid="1" />
+      </selection>
+      <customproperties>
+        <Option />
+      </customproperties>
+      <blendMode>0</blendMode>
+      <featureBlendMode>0</featureBlendMode>
+      <layerOpacity>1</layerOpacity>
+      <geometryOptions geometryPrecision="0" removeDuplicateNodes="0">
+        <activeChecks type="StringList">
+          <Option type="QString" value="" />
+        </activeChecks>
+        <checkConfiguration />
+      </geometryOptions>
+      <legend showLabelLegend="0" type="default-vector" />
+      <referencedLayers />
+      <referencingLayers />
+      <fieldConfiguration>
+        <field configurationFlags="NoFlag" name="building_id">
+          <editWidget type="">
+            <config>
+              <Option />
+            </config>
+          </editWidget>
+        </field>
+        <field configurationFlags="NoFlag" name="measuredHeight">
+          <editWidget type="">
+            <config>
+              <Option />
+            </config>
+          </editWidget>
+        </field>
+      </fieldConfiguration>
+      <aliases>
+        <alias field="building_id" name="" index="0" />
+        <alias field="measuredHeight" name="" index="1" />
+      </aliases>
+      <defaults>
+        <default applyOnUpdate="0" expression="" field="building_id" />
+        <default applyOnUpdate="0" expression="" field="measuredHeight" />
+      </defaults>
+      <constraints>
+        <constraint notnull_strength="0" constraints="0" exp_strength="0" unique_strength="0" field="building_id" />
+        <constraint notnull_strength="0" constraints="0" exp_strength="0" unique_strength="0" field="measuredHeight" />
+      </constraints>
+      <constraintExpressions>
+        <constraint exp="" desc="" field="building_id" />
+        <constraint exp="" desc="" field="measuredHeight" />
+      </constraintExpressions>
+      <expressionfields />
+      <attributeactions />
+      <attributetableconfig actionWidgetStyle="dropDown" sortOrder="0" sortExpression="">
+        <columns />
+      </attributetableconfig>
+      <conditionalstyles>
+        <rowstyles />
+        <fieldstyles />
+      </conditionalstyles>
+      <storedexpressions />
+      <editform tolerant="1" />
+      <editforminit />
+      <editforminitcodesource>0</editforminitcodesource>
+      <editforminitfilepath />
+      <editforminitcode />
+      <featformsuppress>0</featformsuppress>
+      <editorlayout>generatedlayout</editorlayout>
+      <editable />
+      <labelOnTop />
+      <reuseLastValue />
+      <dataDefinedFieldProperties />
+      <widgets />
+      <previewExpression />
+      <mapTip enabled="1" />
+    </maplayer>
+    <maplayer simplifyDrawingTol="1" refreshOnNotifyMessage="" labelsEnabled="0" simplifyLocal="1" simplifyDrawingHints="1" legendPlaceholderImage="" maxScale="0" wkbType="PointZ" simplifyAlgorithm="0" simplifyMaxScale="1" symbologyReferenceScale="-1" minScale="100000000" hasScaleBasedVisibilityFlag="0" refreshOnNotifyEnabled="0" type="vector" autoRefreshTime="0" styleCategories="AllStyleCategories" readOnly="0" autoRefreshMode="Disabled" geometry="Point">
+      <extent>
+        <xmin>12</xmin>
+        <ymin>-1</ymin>
+        <xmax>87</xmax>
+        <ymax>30</ymax>
+      </extent>
+      <wgs84extent>
+        <xmin>139.83346643790142139</xmin>
+        <ymin>35.9999909828793605</ymin>
+        <xmax>139.83429834485804122</xmax>
+        <ymax>36.00027039709483745</ymax>
+      </wgs84extent>
+      <id>synthetic_gps_183715d5_8f84_4ab3_aebe_734427fbd7ac</id>
+      <datasource>./synthetic_gps.geojson</datasource>
+      <layername>synthetic_gps</layername>
+      <srs>
+        <spatialrefsys nativeFormat="Wkt">
+          <wkt>PROJCRS["JGD2011 / Japan Plane Rectangular CS IX",BASEGEOGCRS["JGD2011",DATUM["Japanese Geodetic Datum 2011",ELLIPSOID["GRS 1980",6378137,298.257222101,LENGTHUNIT["metre",1]]],PRIMEM["Greenwich",0,ANGLEUNIT["degree",0.0174532925199433]],ID["EPSG",6668]],CONVERSION["Japan Plane Rectangular CS zone IX",METHOD["Transverse Mercator",ID["EPSG",9807]],PARAMETER["Latitude of natural origin",36,ANGLEUNIT["degree",0.0174532925199433],ID["EPSG",8801]],PARAMETER["Longitude of natural origin",139.833333333333,ANGLEUNIT["degree",0.0174532925199433],ID["EPSG",8802]],PARAMETER["Scale factor at natural origin",0.9999,SCALEUNIT["unity",1],ID["EPSG",8805]],PARAMETER["False easting",0,LENGTHUNIT["metre",1],ID["EPSG",8806]],PARAMETER["False northing",0,LENGTHUNIT["metre",1],ID["EPSG",8807]]],CS[Cartesian,2],AXIS["northing (X)",north,ORDER[1],LENGTHUNIT["metre",1]],AXIS["easting (Y)",east,ORDER[2],LENGTHUNIT["metre",1]],USAGE[SCOPE["Cadastre, engineering survey, topographic mapping (large and medium scale)."],AREA["Japan - onshore - Honshu - Tokyo-to. (Excludes offshore island areas of Tokyo-to covered by Japan Plane Rectangular Coordinate System zones XIV, XVIII and XIX)."],BBOX[29.31,138.4,37.98,141.11]],ID["EPSG",6677]]</wkt>
+          <proj4>+proj=tmerc +lat_0=36 +lon_0=139.833333333333 +k=0.9999 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs</proj4>
+          <srsid>28350</srsid>
+          <srid>6677</srid>
+          <authid>EPSG:6677</authid>
+          <description>JGD2011 / Japan Plane Rectangular CS IX</description>
+          <projectionacronym>tmerc</projectionacronym>
+          <ellipsoidacronym>EPSG:7019</ellipsoidacronym>
+          <geographicflag>false</geographicflag>
+        </spatialrefsys>
+      </srs>
+      <resourceMetadata>
+        <identifier />
+        <parentidentifier />
+        <language />
+        <type>dataset</type>
+        <title />
+        <abstract />
+        <links />
+        <dates />
+        <fees />
+        <encoding />
+        <crs>
+          <spatialrefsys nativeFormat="Wkt">
+            <wkt>PROJCRS["JGD2011 / Japan Plane Rectangular CS IX",BASEGEOGCRS["JGD2011",DATUM["Japanese Geodetic Datum 2011",ELLIPSOID["GRS 1980",6378137,298.257222101,LENGTHUNIT["metre",1]]],PRIMEM["Greenwich",0,ANGLEUNIT["degree",0.0174532925199433]],ID["EPSG",6668]],CONVERSION["Japan Plane Rectangular CS zone IX",METHOD["Transverse Mercator",ID["EPSG",9807]],PARAMETER["Latitude of natural origin",36,ANGLEUNIT["degree",0.0174532925199433],ID["EPSG",8801]],PARAMETER["Longitude of natural origin",139.833333333333,ANGLEUNIT["degree",0.0174532925199433],ID["EPSG",8802]],PARAMETER["Scale factor at natural origin",0.9999,SCALEUNIT["unity",1],ID["EPSG",8805]],PARAMETER["False easting",0,LENGTHUNIT["metre",1],ID["EPSG",8806]],PARAMETER["False northing",0,LENGTHUNIT["metre",1],ID["EPSG",8807]]],CS[Cartesian,2],AXIS["northing (X)",north,ORDER[1],LENGTHUNIT["metre",1]],AXIS["easting (Y)",east,ORDER[2],LENGTHUNIT["metre",1]],USAGE[SCOPE["Cadastre, engineering survey, topographic mapping (large and medium scale)."],AREA["Japan - onshore - Honshu - Tokyo-to. (Excludes offshore island areas of Tokyo-to covered by Japan Plane Rectangular Coordinate System zones XIV, XVIII and XIX)."],BBOX[29.31,138.4,37.98,141.11]],ID["EPSG",6677]]</wkt>
+            <proj4>+proj=tmerc +lat_0=36 +lon_0=139.833333333333 +k=0.9999 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs</proj4>
+            <srsid>28350</srsid>
+            <srid>6677</srid>
+            <authid>EPSG:6677</authid>
+            <description>JGD2011 / Japan Plane Rectangular CS IX</description>
+            <projectionacronym>tmerc</projectionacronym>
+            <ellipsoidacronym>EPSG:7019</ellipsoidacronym>
+            <geographicflag>false</geographicflag>
+          </spatialrefsys>
+        </crs>
+        <extent />
+      </resourceMetadata>
+      <provider encoding="UTF-8">ogr</provider>
+      <vectorjoins />
+      <layerDependencies />
+      <dataDependencies />
+      <expressionfields />
+      <map-layer-style-manager current="default">
+        <map-layer-style name="default" />
+      </map-layer-style-manager>
+      <auxiliaryLayer />
+      <flags>
+        <Identifiable>1</Identifiable>
+        <Removable>1</Removable>
+        <Searchable>1</Searchable>
+        <Private>0</Private>
+      </flags>
+      <temporal endExpression="" durationUnit="min" mode="0" limitMode="0" accumulate="0" startExpression="" enabled="0" startField="" fixedDuration="0" endField="" durationField="">
+        <fixedRange>
+          <start />
+          <end />
+        </fixedRange>
+      </temporal>
+      <elevation showMarkerSymbolInSurfacePlots="0" extrusionEnabled="0" binding="Centroid" type="IndividualFeatures" extrusion="0" clamping="Absolute" symbology="Line" customToleranceEnabled="0" zoffset="0" zscale="1" respectLayerSymbol="1">
+        <data-defined-properties>
+          <Option type="Map">
+            <Option type="QString" name="name" value="" />
+            <Option name="properties" />
+            <Option type="QString" name="type" value="collection" />
+          </Option>
+        </data-defined-properties>
+        <profileLineSymbol>
+          <symbol type="line" force_rhr="0" alpha="1" clip_to_extent="1" is_animated="0" name="" frame_rate="10">
+            <data_defined_properties>
+              <Option type="Map">
+                <Option type="QString" name="name" value="" />
+                <Option name="properties" />
+                <Option type="QString" name="type" value="collection" />
+              </Option>
+            </data_defined_properties>
+            <layer class="SimpleLine" pass="0" locked="0" enabled="1" id="{2047d04c-1e3b-48cc-a2c8-a28fa4572208}">
+              <Option type="Map">
+                <Option type="QString" name="align_dash_pattern" value="0" />
+                <Option type="QString" name="capstyle" value="square" />
+                <Option type="QString" name="customdash" value="5;2" />
+                <Option type="QString" name="customdash_map_unit_scale" value="3x:0,0,0,0,0,0" />
+                <Option type="QString" name="customdash_unit" value="MM" />
+                <Option type="QString" name="dash_pattern_offset" value="0" />
+                <Option type="QString" name="dash_pattern_offset_map_unit_scale" value="3x:0,0,0,0,0,0" />
+                <Option type="QString" name="dash_pattern_offset_unit" value="MM" />
+                <Option type="QString" name="draw_inside_polygon" value="0" />
+                <Option type="QString" name="joinstyle" value="bevel" />
+                <Option type="QString" name="line_color" value="183,72,75,255,rgb:0.7176471,0.2823529,0.2941176,1" />
+                <Option type="QString" name="line_style" value="solid" />
+                <Option type="QString" name="line_width" value="0.6" />
+                <Option type="QString" name="line_width_unit" value="MM" />
+                <Option type="QString" name="offset" value="0" />
+                <Option type="QString" name="offset_map_unit_scale" value="3x:0,0,0,0,0,0" />
+                <Option type="QString" name="offset_unit" value="MM" />
+                <Option type="QString" name="ring_filter" value="0" />
+                <Option type="QString" name="trim_distance_end" value="0" />
+                <Option type="QString" name="trim_distance_end_map_unit_scale" value="3x:0,0,0,0,0,0" />
+                <Option type="QString" name="trim_distance_end_unit" value="MM" />
+                <Option type="QString" name="trim_distance_start" value="0" />
+                <Option type="QString" name="trim_distance_start_map_unit_scale" value="3x:0,0,0,0,0,0" />
+                <Option type="QString" name="trim_distance_start_unit" value="MM" />
+                <Option type="QString" name="tweak_dash_pattern_on_corners" value="0" />
+                <Option type="QString" name="use_custom_dash" value="0" />
+                <Option type="QString" name="width_map_unit_scale" value="3x:0,0,0,0,0,0" />
+              </Option>
+              <data_defined_properties>
+                <Option type="Map">
+                  <Option type="QString" name="name" value="" />
+                  <Option name="properties" />
+                  <Option type="QString" name="type" value="collection" />
+                </Option>
+              </data_defined_properties>
+            </layer>
+          </symbol>
+        </profileLineSymbol>
+        <profileFillSymbol>
+          <symbol type="fill" force_rhr="0" alpha="1" clip_to_extent="1" is_animated="0" name="" frame_rate="10">
+            <data_defined_properties>
+              <Option type="Map">
+                <Option type="QString" name="name" value="" />
+                <Option name="properties" />
+                <Option type="QString" name="type" value="collection" />
+              </Option>
+            </data_defined_properties>
+            <layer class="SimpleFill" pass="0" locked="0" enabled="1" id="{8589d8da-e979-4a5d-b2ca-8f26e6209b78}">
+              <Option type="Map">
+                <Option type="QString" name="border_width_map_unit_scale" value="3x:0,0,0,0,0,0" />
+                <Option type="QString" name="color" value="183,72,75,255,rgb:0.7176471,0.2823529,0.2941176,1" />
+                <Option type="QString" name="joinstyle" value="bevel" />
+                <Option type="QString" name="offset" value="0,0" />
+                <Option type="QString" name="offset_map_unit_scale" value="3x:0,0,0,0,0,0" />
+                <Option type="QString" name="offset_unit" value="MM" />
+                <Option type="QString" name="outline_color" value="131,51,54,255,rgb:0.5125963,0.2016785,0.210071,1" />
+                <Option type="QString" name="outline_style" value="solid" />
+                <Option type="QString" name="outline_width" value="0.2" />
+                <Option type="QString" name="outline_width_unit" value="MM" />
+                <Option type="QString" name="style" value="solid" />
+              </Option>
+              <data_defined_properties>
+                <Option type="Map">
+                  <Option type="QString" name="name" value="" />
+                  <Option name="properties" />
+                  <Option type="QString" name="type" value="collection" />
+                </Option>
+              </data_defined_properties>
+            </layer>
+          </symbol>
+        </profileFillSymbol>
+        <profileMarkerSymbol>
+          <symbol type="marker" force_rhr="0" alpha="1" clip_to_extent="1" is_animated="0" name="" frame_rate="10">
+            <data_defined_properties>
+              <Option type="Map">
+                <Option type="QString" name="name" value="" />
+                <Option name="properties" />
+                <Option type="QString" name="type" value="collection" />
+              </Option>
+            </data_defined_properties>
+            <layer class="SimpleMarker" pass="0" locked="0" enabled="1" id="{19275137-9f35-4b15-a290-c2c3dc19320c}">
+              <Option type="Map">
+                <Option type="QString" name="angle" value="0" />
+                <Option type="QString" name="cap_style" value="square" />
+                <Option type="QString" name="color" value="183,72,75,255,rgb:0.7176471,0.2823529,0.2941176,1" />
+                <Option type="QString" name="horizontal_anchor_point" value="1" />
+                <Option type="QString" name="joinstyle" value="bevel" />
+                <Option type="QString" name="name" value="diamond" />
+                <Option type="QString" name="offset" value="0,0" />
+                <Option type="QString" name="offset_map_unit_scale" value="3x:0,0,0,0,0,0" />
+                <Option type="QString" name="offset_unit" value="MM" />
+                <Option type="QString" name="outline_color" value="131,51,54,255,rgb:0.5125963,0.2016785,0.210071,1" />
+                <Option type="QString" name="outline_style" value="solid" />
+                <Option type="QString" name="outline_width" value="0.2" />
+                <Option type="QString" name="outline_width_map_unit_scale" value="3x:0,0,0,0,0,0" />
+                <Option type="QString" name="outline_width_unit" value="MM" />
+                <Option type="QString" name="scale_method" value="diameter" />
+                <Option type="QString" name="size" value="3" />
+                <Option type="QString" name="size_map_unit_scale" value="3x:0,0,0,0,0,0" />
+                <Option type="QString" name="size_unit" value="MM" />
+                <Option type="QString" name="vertical_anchor_point" value="1" />
+              </Option>
+              <data_defined_properties>
+                <Option type="Map">
+                  <Option type="QString" name="name" value="" />
+                  <Option name="properties" />
+                  <Option type="QString" name="type" value="collection" />
+                </Option>
+              </data_defined_properties>
+            </layer>
+          </symbol>
+        </profileMarkerSymbol>
+      </elevation>
+      <renderer-v2 forceraster="0" type="singleSymbol" enableorderby="0" symbollevels="0" referencescale="-1">
+        <symbols>
+          <symbol type="marker" force_rhr="0" alpha="1" clip_to_extent="1" is_animated="0" name="0" frame_rate="10">
+            <data_defined_properties>
+              <Option type="Map">
+                <Option type="QString" name="name" value="" />
+                <Option name="properties" />
+                <Option type="QString" name="type" value="collection" />
+              </Option>
+            </data_defined_properties>
+            <layer class="SimpleMarker" pass="0" locked="0" enabled="1" id="{316da1b3-c1dd-4a7f-a875-dbcac9378efa}">
+              <Option type="Map">
+                <Option type="QString" name="angle" value="0" />
+                <Option type="QString" name="cap_style" value="square" />
+                <Option type="QString" name="color" value="255,158,23,255,rgb:1,0.6196078,0.0901961,1" />
+                <Option type="QString" name="horizontal_anchor_point" value="1" />
+                <Option type="QString" name="joinstyle" value="bevel" />
+                <Option type="QString" name="name" value="circle" />
+                <Option type="QString" name="offset" value="0,0" />
+                <Option type="QString" name="offset_map_unit_scale" value="3x:0,0,0,0,0,0" />
+                <Option type="QString" name="offset_unit" value="MM" />
+                <Option type="QString" name="outline_color" value="35,35,35,255,rgb:0.1372549,0.1372549,0.1372549,1" />
+                <Option type="QString" name="outline_style" value="solid" />
+                <Option type="QString" name="outline_width" value="0" />
+                <Option type="QString" name="outline_width_map_unit_scale" value="3x:0,0,0,0,0,0" />
+                <Option type="QString" name="outline_width_unit" value="MM" />
+                <Option type="QString" name="scale_method" value="diameter" />
+                <Option type="QString" name="size" value="2" />
+                <Option type="QString" name="size_map_unit_scale" value="3x:0,0,0,0,0,0" />
+                <Option type="QString" name="size_unit" value="MM" />
+                <Option type="QString" name="vertical_anchor_point" value="1" />
+              </Option>
+              <data_defined_properties>
+                <Option type="Map">
+                  <Option type="QString" name="name" value="" />
+                  <Option name="properties" />
+                  <Option type="QString" name="type" value="collection" />
+                </Option>
+              </data_defined_properties>
+            </layer>
+          </symbol>
+        </symbols>
+        <rotation />
+        <sizescale />
+        <data-defined-properties>
+          <Option type="Map">
+            <Option type="QString" name="name" value="" />
+            <Option name="properties" />
+            <Option type="QString" name="type" value="collection" />
+          </Option>
+        </data-defined-properties>
+      </renderer-v2>
+      <selection mode="Default">
+        <selectionColor invalid="1" />
+      </selection>
+      <customproperties>
+        <Option />
+      </customproperties>
+      <blendMode>0</blendMode>
+      <featureBlendMode>0</featureBlendMode>
+      <layerOpacity>1</layerOpacity>
+      <geometryOptions geometryPrecision="0" removeDuplicateNodes="0">
+        <activeChecks type="StringList">
+          <Option type="QString" value="" />
+        </activeChecks>
+        <checkConfiguration />
+      </geometryOptions>
+      <legend showLabelLegend="0" type="default-vector" />
+      <referencedLayers />
+      <referencingLayers />
+      <fieldConfiguration>
+        <field configurationFlags="NoFlag" name="sample_id">
+          <editWidget type="">
+            <config>
+              <Option />
+            </config>
+          </editWidget>
+        </field>
+        <field configurationFlags="NoFlag" name="note">
+          <editWidget type="">
+            <config>
+              <Option />
+            </config>
+          </editWidget>
+        </field>
+      </fieldConfiguration>
+      <aliases>
+        <alias field="sample_id" name="" index="0" />
+        <alias field="note" name="" index="1" />
+      </aliases>
+      <defaults>
+        <default applyOnUpdate="0" expression="" field="sample_id" />
+        <default applyOnUpdate="0" expression="" field="note" />
+      </defaults>
+      <constraints>
+        <constraint notnull_strength="0" constraints="0" exp_strength="0" unique_strength="0" field="sample_id" />
+        <constraint notnull_strength="0" constraints="0" exp_strength="0" unique_strength="0" field="note" />
+      </constraints>
+      <constraintExpressions>
+        <constraint exp="" desc="" field="sample_id" />
+        <constraint exp="" desc="" field="note" />
+      </constraintExpressions>
+      <expressionfields />
+      <attributeactions />
+      <attributetableconfig actionWidgetStyle="dropDown" sortOrder="0" sortExpression="">
+        <columns />
+      </attributetableconfig>
+      <conditionalstyles>
+        <rowstyles />
+        <fieldstyles />
+      </conditionalstyles>
+      <storedexpressions />
+      <editform tolerant="1" />
+      <editforminit />
+      <editforminitcodesource>0</editforminitcodesource>
+      <editforminitfilepath />
+      <editforminitcode />
+      <featformsuppress>0</featformsuppress>
+      <editorlayout>generatedlayout</editorlayout>
+      <editable />
+      <labelOnTop />
+      <reuseLastValue />
+      <dataDefinedFieldProperties />
+      <widgets />
+      <previewExpression />
+      <mapTip enabled="1" />
+    </maplayer>
+  </projectlayers>
+  <layerorder>
+    <layer id="synthetic_building_c66a9924_f65e_4175_889d_7fdf6a305fd3" />
+    <layer id="synthetic_gps_183715d5_8f84_4ab3_aebe_734427fbd7ac" />
+  </layerorder>
+  <labelEngineSettings />
+  <properties>
+    <Digitizing>
+      <AvoidIntersectionsMode type="int">0</AvoidIntersectionsMode>
+    </Digitizing>
+    <Gui>
+      <CanvasColorBluePart type="int">255</CanvasColorBluePart>
+      <CanvasColorGreenPart type="int">255</CanvasColorGreenPart>
+      <CanvasColorRedPart type="int">255</CanvasColorRedPart>
+      <SelectionColorAlphaPart type="int">255</SelectionColorAlphaPart>
+      <SelectionColorBluePart type="int">0</SelectionColorBluePart>
+      <SelectionColorGreenPart type="int">255</SelectionColorGreenPart>
+      <SelectionColorRedPart type="int">255</SelectionColorRedPart>
+    </Gui>
+    <Measurement>
+      <AreaUnits type="QString">m2</AreaUnits>
+      <DistanceUnits type="QString">meters</DistanceUnits>
+      <ScaleMethod type="QString">HorizontalMiddle</ScaleMethod>
+    </Measurement>
+    <PAL>
+      <CandidatesLinePerCM type="double">5</CandidatesLinePerCM>
+      <CandidatesPolygonPerCM type="double">2.5</CandidatesPolygonPerCM>
+      <DrawLabelMetrics type="bool">false</DrawLabelMetrics>
+      <DrawRectOnly type="bool">false</DrawRectOnly>
+      <DrawUnplaced type="bool">false</DrawUnplaced>
+      <PlacementEngineVersion type="int">1</PlacementEngineVersion>
+      <SearchMethod type="int">0</SearchMethod>
+      <ShowingAllLabels type="bool">false</ShowingAllLabels>
+      <ShowingCandidates type="bool">false</ShowingCandidates>
+      <ShowingPartialsLabels type="bool">true</ShowingPartialsLabels>
+      <TextFormat type="int">0</TextFormat>
+      <UnplacedColor type="QString">255,0,0,255,rgb:1,0,0,1</UnplacedColor>
+    </PAL>
+    <Paths>
+      <Absolute type="bool">false</Absolute>
+    </Paths>
+    <PositionPrecision>
+      <Automatic type="bool">true</Automatic>
+      <DecimalPlaces type="int">2</DecimalPlaces>
+    </PositionPrecision>
+    <SpatialRefSys>
+      <ProjectionsEnabled type="int">1</ProjectionsEnabled>
+    </SpatialRefSys>
+  </properties>
+  <dataDefinedServerProperties>
+    <Option type="Map">
+      <Option type="QString" name="name" value="" />
+      <Option name="properties" />
+      <Option type="QString" name="type" value="collection" />
+    </Option>
+  </dataDefinedServerProperties>
+  <visibility-presets />
+  <transformContext />
+  <projectMetadata>
+    <identifier />
+    <parentidentifier />
+    <language />
+    <type />
+    <title />
+    <abstract />
+    <links />
+    <dates>
+      <date type="Created" value="2026-10-19T20:11:16" />
+    </dates>
+    <author>Section Georeferencer synthetic example</author>
+    <creation>2026-10-19T20:11:16</creation>
+  </projectMetadata>
+  <Annotations />
+  <Layouts />
+  <mapViewDocks3D />
+  <Bookmarks />
+  <Sensors />
+  <ProjectViewSettings UseProjectScales="0" rotation="0">
+    <Scales />
+    <DefaultViewExtent xmin="-10" xmax="110" ymin="-10" ymax="40">
+      <spatialrefsys nativeFormat="Wkt">
+        <wkt>PROJCRS["JGD2011 / Japan Plane Rectangular CS IX",BASEGEOGCRS["JGD2011",DATUM["Japanese Geodetic Datum 2011",ELLIPSOID["GRS 1980",6378137,298.257222101,LENGTHUNIT["metre",1]]],PRIMEM["Greenwich",0,ANGLEUNIT["degree",0.0174532925199433]],ID["EPSG",6668]],CONVERSION["Japan Plane Rectangular CS zone IX",METHOD["Transverse Mercator",ID["EPSG",9807]],PARAMETER["Latitude of natural origin",36,ANGLEUNIT["degree",0.0174532925199433],ID["EPSG",8801]],PARAMETER["Longitude of natural origin",139.833333333333,ANGLEUNIT["degree",0.0174532925199433],ID["EPSG",8802]],PARAMETER["Scale factor at natural origin",0.9999,SCALEUNIT["unity",1],ID["EPSG",8805]],PARAMETER["False easting",0,LENGTHUNIT["metre",1],ID["EPSG",8806]],PARAMETER["False northing",0,LENGTHUNIT["metre",1],ID["EPSG",8807]]],CS[Cartesian,2],AXIS["northing (X)",north,ORDER[1],LENGTHUNIT["metre",1]],AXIS["easting (Y)",east,ORDER[2],LENGTHUNIT["metre",1]],USAGE[SCOPE["Cadastre, engineering survey, topographic mapping (large and medium scale)."],AREA["Japan - onshore - Honshu - Tokyo-to. (Excludes offshore island areas of Tokyo-to covered by Japan Plane Rectangular Coordinate System zones XIV, XVIII and XIX)."],BBOX[29.31,138.4,37.98,141.11]],ID["EPSG",6677]]</wkt>
+        <proj4>+proj=tmerc +lat_0=36 +lon_0=139.833333333333 +k=0.9999 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs</proj4>
+        <srsid>28350</srsid>
+        <srid>6677</srid>
+        <authid>EPSG:6677</authid>
+        <description>JGD2011 / Japan Plane Rectangular CS IX</description>
+        <projectionacronym>tmerc</projectionacronym>
+        <ellipsoidacronym>EPSG:7019</ellipsoidacronym>
+        <geographicflag>false</geographicflag>
+      </spatialrefsys>
+    </DefaultViewExtent>
+  </ProjectViewSettings>
+  <ProjectStyleSettings colorModel="Rgb" RandomizeDefaultSymbolColor="1" DefaultSymbolOpacity="1">
+    <databases />
+  </ProjectStyleSettings>
+  <ProjectTimeSettings frameRate="1" cumulativeTemporalRange="0" totalMovieFrames="100" timeStepUnit="h" timeStep="1" />
+  <ElevationProperties FilterInvertSlider="0">
+    <terrainProvider type="flat">
+      <TerrainProvider offset="0" scale="1" />
+    </terrainProvider>
+  </ElevationProperties>
+  <ProjectDisplaySettings CoordinateAxisOrder="Default" CoordinateType="MapCrs">
+    <BearingFormat id="bearing">
+      <Option type="Map">
+        <Option type="invalid" name="decimal_separator" />
+        <Option type="int" name="decimals" value="6" />
+        <Option type="int" name="direction_format" value="0" />
+        <Option type="int" name="rounding_type" value="0" />
+        <Option type="bool" name="show_plus" value="false" />
+        <Option type="bool" name="show_thousand_separator" value="true" />
+        <Option type="bool" name="show_trailing_zeros" value="false" />
+        <Option type="invalid" name="thousand_separator" />
+      </Option>
+    </BearingFormat>
+    <GeographicCoordinateFormat id="geographiccoordinate">
+      <Option type="Map">
+        <Option type="QString" name="angle_format" value="DecimalDegrees" />
+        <Option type="invalid" name="decimal_separator" />
+        <Option type="int" name="decimals" value="6" />
+        <Option type="int" name="rounding_type" value="0" />
+        <Option type="bool" name="show_leading_degree_zeros" value="false" />
+        <Option type="bool" name="show_leading_zeros" value="false" />
+        <Option type="bool" name="show_plus" value="false" />
+        <Option type="bool" name="show_suffix" value="false" />
+        <Option type="bool" name="show_thousand_separator" value="true" />
+        <Option type="bool" name="show_trailing_zeros" value="false" />
+        <Option type="invalid" name="thousand_separator" />
+      </Option>
+    </GeographicCoordinateFormat>
+    <CoordinateCustomCrs>
+      <spatialrefsys nativeFormat="Wkt">
+        <wkt>GEOGCRS["WGS 84",ENSEMBLE["World Geodetic System 1984 ensemble",MEMBER["World Geodetic System 1984 (Transit)"],MEMBER["World Geodetic System 1984 (G730)"],MEMBER["World Geodetic System 1984 (G873)"],MEMBER["World Geodetic System 1984 (G1150)"],MEMBER["World Geodetic System 1984 (G1674)"],MEMBER["World Geodetic System 1984 (G1762)"],MEMBER["World Geodetic System 1984 (G2139)"],MEMBER["World Geodetic System 1984 (G2296)"],ELLIPSOID["WGS 84",6378137,298.257223563,LENGTHUNIT["metre",1]],ENSEMBLEACCURACY[2.0]],PRIMEM["Greenwich",0,ANGLEUNIT["degree",0.0174532925199433]],CS[ellipsoidal,2],AXIS["geodetic latitude (Lat)",north,ORDER[1],ANGLEUNIT["degree",0.0174532925199433]],AXIS["geodetic longitude (Lon)",east,ORDER[2],ANGLEUNIT["degree",0.0174532925199433]],USAGE[SCOPE["Horizontal component of 3D system."],AREA["World."],BBOX[-90,-180,90,180]],ID["EPSG",4326]]</wkt>
+        <proj4>+proj=longlat +datum=WGS84 +no_defs</proj4>
+        <srsid>3452</srsid>
+        <srid>4326</srid>
+        <authid>EPSG:4326</authid>
+        <description>WGS 84</description>
+        <projectionacronym>longlat</projectionacronym>
+        <ellipsoidacronym>EPSG:7030</ellipsoidacronym>
+        <geographicflag>true</geographicflag>
+      </spatialrefsys>
+    </CoordinateCustomCrs>
+  </ProjectDisplaySettings>
+  <ProjectGpsSettings destinationLayer="" autoAddTrackVertices="0" destinationFollowsActiveLayer="1" autoCommitFeatures="0">
+    <timeStampFields />
+  </ProjectGpsSettings>
+</qgis>

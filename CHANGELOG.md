@@ -1,9 +1,48 @@
 # Changelog
 
-## Unreleased
+## 0.2.2 (2026-10-19)
+
+### Fixed
+
+- GCP fitting, deletion and clearing invalidate both GPS and PLATEAU projected
+  results, preventing old pixels from being exported with a new transform.
+- Section GeoTIFFs use a local engineering CRS in metres. The original map CRS
+  is stored separately as `SECTION_SOURCE_CRS`, never assigned to section axes.
+  Non-metre project CRSs are refused to keep distance and height units consistent.
+- Per-layer projection results use QGIS layer IDs. Same-named layers no longer
+  overwrite each other; renaming and reprojecting a layer replaces its own rows.
+- Clearing an image clears its GCPs and transform. Loading a config without an
+  image clears the previous canvas instead of mixing two sessions.
+- Nested config types, finite numbers and affine inverse consistency are
+  validated before changing the session; invalid configs keep current work.
+- Invalid source CRSs and coordinate-transform initialization failures stop
+  projection rather than silently treating raw coordinates as project coordinates.
+- GPS attributes with conflicting `src_` names are preserved with unique names;
+  the original-to-exported mapping is recorded in the projection summary.
+- Pending settings are checked again after applying changes that may clear the
+  transform, before projection or package export proceeds.
+
+### Added
+
+- Regression tests for all eight review findings and adjacent failure paths.
+- QGIS/GDAL CI that rejects skipped tests, deterministic ZIP packaging with a
+  SHA256 checksum, and an isolated plugin-loader/export smoke test of the ZIP.
+- A synthetic project, section image, GCP config, building/GPS layers and
+  walkthrough, plus a screenshot generated from those invented inputs.
+- Source layer/feature identity in GIS exports and source attribute mapping.
+
+### Compatibility
+
+- Minimum declared QGIS version is now 3.44, matching the locally verified
+  baseline (macOS QGIS 3.44.5). QGIS 4 is excluded. Linux CI is configured;
+  Windows and native Linux desktop operation remain unverified.
+
+## 0.2.1 (2026-10-19)
 
 ### Changed
 
+- Prepared for GitHub publication under GPL-2.0-or-later; `metadata.txt` now carries the
+  author, homepage, repository, and issue tracker.
 - A building picked in step 1 is drawn on the map with an orange footprint
   fill and a red outline, so it stands out from the layer style and from other
   buildings; it is hidden with the plugin window and removed by **Clear**.

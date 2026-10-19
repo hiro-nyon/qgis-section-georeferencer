@@ -1,6 +1,6 @@
 # Section Georeferencer
 
-Section Georeferencer is a research MVP QGIS 3.28+ plugin for georeferencing
+Section Georeferencer is a research MVP QGIS 3.44+ plugin for georeferencing
 architectural section drawing images and overlaying projected 3D geospatial
 data on top of the section.
 
@@ -15,19 +15,45 @@ The plugin then projects world coordinates `(x, y, z)` from GPS, CAD, or
 PLATEAU-derived vector layers into `(s, z)` and draws the result over the
 section image.
 
+![Synthetic section example](docs/synthetic-demo.png)
+
+The screenshot and [bundled walkthrough](examples/synthetic/README.md) use
+invented data. They demonstrate operation, not accuracy on real observations.
+
 ## Installation
 
-Copy or symlink the `section_georeferencer` directory into your QGIS Python
-plugin directory.
+For a packaged installation, use `section_georeferencer-0.2.2.zip` from the
+release assets when published. In QGIS, open **Plugins > Manage and Install
+Plugins > Install from ZIP**, select that file, then enable the plugin. The
+ZIP contains a single `section_georeferencer/` folder. GitHub's automatic
+source-code ZIP is not the installable release archive.
 
-Typical plugin directories are:
+To build that archive from this checkout, run `python scripts/build_plugin.py`.
+It writes the ZIP and its SHA256 checksum to `dist/`, includes the license and
+synthetic example, and excludes Git history, caches, tests and development tools.
+
+For a development installation:
+
+The plugin folder must be named `section_georeferencer` inside your QGIS
+Python plugin directory. Typical plugin directories are:
 
 - macOS: `~/Library/Application Support/QGIS/QGIS3/profiles/default/python/plugins/`
 - Windows: `%APPDATA%\QGIS\QGIS3\profiles\default\python\plugins\`
 - Linux: `~/.local/share/QGIS/QGIS3/profiles/default/python/plugins/`
 
-Restart QGIS, then enable **Section Georeferencer** in the QGIS Plugin Manager.
-The plugin adds a toolbar/menu action named **Section Georeferencer**.
+Clone the repository straight into that directory under the plugin's name, for
+example on macOS:
+
+```bash
+cd ~/Library/Application\ Support/QGIS/QGIS3/profiles/default/python/plugins/
+git clone https://github.com/hiro-nyon/qgis-section-georeferencer.git section_georeferencer
+```
+
+Alternatively clone it anywhere and symlink it into the plugin directory as
+`section_georeferencer`. Restart QGIS, then enable **Section Georeferencer** in
+the QGIS Plugin Manager. The plugin adds a toolbar/menu action named **Section
+Georeferencer**. QGIS 3.44 or later (QGIS 3.x / Qt5) is required; QGIS 4 is not
+supported yet.
 
 ## Basic Workflow
 
@@ -84,7 +110,10 @@ message bar.
    PLATEAU/CAD vector layer. If features are selected in the active layer, only
    those are projected; otherwise the whole layer is processed. Projecting the
    same layer again **replaces** its previous result rather than appending a
-   duplicate copy.
+   duplicate copy. Identity is based on QGIS's layer ID, so distinct layers with
+   the same display name remain separate, and renaming a layer does not duplicate
+   it. A new GCP fit or clearing/deleting GCPs clears projected results; project
+   the layers again after calibration changes.
 10. **6. Export** — export the overlaid section as PNG, or export a reproducible
    section analysis package. Markers in the exported PNG are scaled to the image
    size so they stay visible at full resolution.
@@ -136,7 +165,10 @@ The project CRS must be projected. Section distance `s`, perpendicular distance
 `d`, and the buffer are planar distances in CRS units while `z` is in metres, so
 a geographic CRS would make them degrees. The plugin refuses to define a section
 line, load a PLATEAU reference, project, or export while the project CRS is
-geographic. A projected CRS whose units are not metres only produces a warning.
+geographic or its units are not metres. Source layers must also have a valid
+CRS; an unknown CRS or failure to construct its coordinate transform stops that
+projection and keeps any previous result. Assign the correct source CRS first;
+merely assigning the project CRS to geographic coordinates is not a conversion.
 
 PLATEAU data is distributed in EPSG:6697 (JGD2011 geographic + JGD2011 height),
 which is geographic. Keep the layers in EPSG:6697 if you like, but set the
@@ -210,6 +242,12 @@ shown when the maximum-to-minimum directional stretch differs by more than 20%
 or when affine shear moves the image axes more than 5 degrees away from a right
 angle. Rotation and uniform scaling are reported but do not trigger warnings.
 
+Config structure, finite numeric values and mutually inverse affine coefficients
+are checked before replacing the current session. Invalid configs leave the
+session intact. Loading a config without an image clears the previous canvas.
+**Clear image** clears its GCPs, transform and projected results too; they cannot
+be reused on a different image.
+
 Image paths are stored relative to the config file when possible. Missing image
 paths produce a warning while preserving the rest of the loaded configuration.
 
@@ -230,7 +268,10 @@ names. With the default legacy names, the package contains:
 - `gps_projected.csv`: every processed GPS point with section coordinates,
   pixel coordinates, raw z, z source, layer name, `inside_buffer`, and every
   attribute of the source layer (an attribute named like a computed column,
-  such as `x` or `s`, is written as `src_x`, `src_s`). Empty attributes are
+  such as `x` or `s`, is written as `src_x`, `src_s`; prefixes are repeated if
+  needed to avoid existing names). `projection_summary.json` records each source
+  layer's attribute-name mapping. `source_layer_id` distinguishes same-named
+  layers within the QGIS session/project. Empty attributes are
   empty cells. Dates and times are ISO 8601 and keep exactly the time-zone
   information they had in QGIS: a naive observation time such as TRIMA
   `recordedat` (JST) stays naive and is not shifted
@@ -253,7 +294,9 @@ with **Save config**: its `image.path` points at the packaged background image
 and the original file name is kept in `image.source_name`, so the package stays
 self-contained and carries no absolute path from the exporting machine.
 
-The GeoTIFF uses the fitted affine transform as a raster GeoTransform:
+The GeoTIFF declares a **local engineering CRS in metres**, not the map CRS.
+`SECTION_SOURCE_CRS` stores the original project CRS as supplementary metadata.
+Its fitted affine transform is a raster GeoTransform:
 
 ```text
 GeoTIFF X = s_along_section
@@ -261,9 +304,7 @@ GeoTIFF Y = z_section
 ```
 
 This is useful for external Python/GDAL workflows that want a georeferenced
-section raster. It is not a normal plan-view map raster. Even if the QGIS
-project CRS is EPSG:4979 or EPSG:6697, the GeoTIFF grid axes are still section
-axes `(s, z_section)`, not longitude/latitude or map x/y. Use
+section raster. It is not a normal plan-view map raster. Its grid axes are section axes `(s, z_section)`, not longitude/latitude or map x/y. Use
 `section_config.json` for the section line `p0/p1`, height offset, and affine
 metadata needed to reconstruct the relationship to the original 3D project
 coordinates.
@@ -341,11 +382,40 @@ Python that ships with QGIS, for example on macOS:
 PYTHONHOME=/Applications/QGIS.app/Contents/Frameworks QT_QPA_PLATFORM=offscreen /Applications/QGIS.app/Contents/MacOS/python3.12 -m unittest discover -s tests
 ```
 
+## Tested environments and release checks
+
+- Minimum declared version: QGIS 3.44 (raised from 3.28 in 0.2.2 to match the
+  verified baseline). QGIS 4 / Qt6 is not supported.
+- Locally verified: macOS, QGIS 3.44.5, Python 3.12, all PyQGIS and GDAL tests.
+- CI configuration: official QGIS 3.44 / Ubuntu Noble container, pinned by
+  digest. `scripts/run_qgis_tests.py` fails if **any** test is skipped, then CI
+  builds and smoke-tests the actual ZIP. A configured job is not a completed
+  Linux test run; check its Actions result after pushing.
+- Windows interactive behavior and native Linux desktop behavior are not yet
+  verified. The plugin remains experimental; no cross-platform certification
+  is implied.
+
+Run `scripts/smoke_test_zip.py` with QGIS's Python after building the ZIP. It
+extracts to a temporary plugin directory and isolated profile, uses QGIS's
+plugin loader, loads the bundled project/config, projects seven synthetic GPS
+points (six inside the buffer), exports CSV/GeoTIFF/GeoPackage, reloads the
+package config, and unloads the plugin. It does not use the installed checkout.
+This is an automated integration check, not a manual click-through test.
+
+Before publishing a release, run both QGIS scripts above, build the ZIP, check
+`git diff --check`, commit the source **including LICENSE**, and tag that exact
+commit `v0.2.2`. Attach the ZIP and checksum to the GitHub Release. Keep `dist/`
+out of source control. See [CHANGELOG.md](CHANGELOG.md) for release notes.
+
 ## License
 
-Not yet chosen. Note that a QGIS plugin links against PyQGIS, which is
-GPL-licensed, so distributing this plugin normally requires GPL-2.0-or-later.
-Add a `LICENSE` file and fill in `metadata.txt` before publishing.
+Section Georeferencer is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by the Free
+Software Foundation, either version 2 of the License, or (at your option) any
+later version (GPL-2.0-or-later). See [LICENSE](LICENSE).
+
+Issues and feature requests:
+<https://github.com/hiro-nyon/qgis-section-georeferencer/issues>
 
 ## Status
 

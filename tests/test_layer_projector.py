@@ -256,5 +256,49 @@ class GpsAttributeTests(unittest.TestCase):
         self.assertEqual(record["src_s"], "source-s")
 
 
+    def test_colliding_attribute_names_survive_in_any_field_order(self):
+        for fields in (["x", "src_x", "src_src_x"], ["src_src_x", "src_x", "x"]):
+            with self.subTest(fields=fields):
+                record = self.project_one(
+                    "PointZ?crs=EPSG:6677&" + "&".join("field=" + f + ":string" for f in fields),
+                    {"x": "original-x", "src_x": "original-src-x", "src_src_x": "original-src-src-x"},
+                )
+                self.assertEqual(record["x"], 5.0)
+                self.assertEqual(record["src_src_src_x"], "original-x")
+                self.assertEqual(record["src_x"], "original-src-x")
+                self.assertEqual(record["src_src_x"], "original-src-src-x")
+
+
+@unittest.skipUnless(HAVE_QGIS, SKIP_REASON)
+class InvalidCrsTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        start_qgis()
+
+    def test_invalid_crs_never_returns_untransformed_records(self):
+        from qgis.core import QgsCoordinateReferenceSystem
+        projector = plugin_module("layer_projector")
+        for geometry, wkt, method in (
+            ("PointZ", "PointZ(139.7 35.6 10)", projector.project_point_layer),
+            ("LineStringZ", "LineStringZ(139.7 35.6 10, 139.8 35.6 20)", projector.project_vector_layer_vertices),
+        ):
+            with self.subTest(geometry=geometry):
+                layer = _memory_layer(geometry, [wkt])
+                layer.setCrs(QgsCoordinateReferenceSystem())
+                result = method(layer, QgsCoordinateReferenceSystem("EPSG:6677"), P0, P1, IDENTITY)
+                self.assertEqual(result["records"], [])
+                self.assertIn("no valid CRS", result["error"])
+
+    def test_transform_initialization_failure_stops_projection(self):
+        from unittest.mock import patch
+        from qgis.core import QgsCoordinateReferenceSystem
+        projector = plugin_module("layer_projector")
+        layer = _memory_layer("PointZ?crs=EPSG:4326", ["PointZ(139.7 35.6 10)"])
+        with patch.object(projector, "QgsCoordinateTransform", side_effect=RuntimeError("failed")):
+            result = projector.project_point_layer(layer, QgsCoordinateReferenceSystem("EPSG:6677"), P0, P1, IDENTITY)
+        self.assertEqual(result["records"], [])
+        self.assertIn("failed", result["error"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,117 @@
+{
+  "type": "FeatureCollection",
+  "name": "synthetic_gps",
+  "crs": {
+    "type": "name",
+    "properties": {
+      "name": "urn:ogc:def:crs:EPSG::6677"
+    }
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          12,
+          0,
+          5
+        ]
+      },
+      "properties": {
+        "sample_id": 1,
+        "note": "synthetic"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          25,
+          1,
+          5
+        ]
+      },
+      "properties": {
+        "sample_id": 2,
+        "note": "synthetic"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          45,
+          -1,
+          15
+        ]
+      },
+      "properties": {
+        "sample_id": 3,
+        "note": "synthetic"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          62,
+          0,
+          15
+        ]
+      },
+      "properties": {
+        "sample_id": 4,
+        "note": "synthetic"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          75,
+          1,
+          25
+        ]
+      },
+      "properties": {
+        "sample_id": 5,
+        "note": "synthetic"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          87,
+          -1,
+          35
+        ]
+      },
+      "properties": {
+        "sample_id": 6,
+        "note": "synthetic"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          52,
+          30,
+          25
+        ]
+      },
+      "properties": {
+        "sample_id": 7,
+        "note": "synthetic"
+      }
+    }
+  ]
+}

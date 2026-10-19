@@ -686,10 +686,14 @@ def _apply_section_georeference(dst, pixel_to_section_coeffs, crs_auth_id, osr):
             float(z_coeffs[2]),
         )
     )
+    # The raster axes are distance/height, never project map coordinates.
+    # Replace any inherited source raster CRS with a local engineering CRS.
+    srs = osr.SpatialReference()
+    srs.SetLocalCS("Section coordinates (s, z_section)")
+    srs.SetLinearUnits("metre", 1.0)
+    dst.SetProjection(srs.ExportToWkt())
     if crs_auth_id:
-        srs = osr.SpatialReference()
-        if srs.SetFromUserInput(str(crs_auth_id)) == 0:
-            dst.SetProjection(srs.ExportToWkt())
+        dst.SetMetadataItem("SECTION_SOURCE_CRS", str(crs_auth_id))
     dst.SetMetadataItem("SECTION_COORDINATE_MODEL", "X=s_along_section,Y=z_section")
     dst.SetMetadataItem(
         "SECTION_GEOREFERENCE_NOTE",

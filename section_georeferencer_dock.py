@@ -73,7 +73,7 @@ from .transforms import (
 
 
 PLUGIN_NAME = "Section Georeferencer"
-PLUGIN_VERSION = "0.2.0"
+PLUGIN_VERSION = "0.2.2"
 
 _STEP_DONE = "✓"
 _STEP_BULLET = "•"
@@ -208,7 +208,7 @@ class SectionGeoreferencerDock(QDockWidget):
         self.current_pixel = None
         self.gcps = []
         self.transform_result = None
-        # Projection results are keyed by source layer name so that projecting
+        # Projection results are keyed by source layer ID so that projecting
         # the same layer twice replaces its previous result instead of
         # silently duplicating every record in the export.
         self.gps_results = {}
@@ -1068,6 +1068,9 @@ class SectionGeoreferencerDock(QDockWidget):
                 settings["z_field"],
                 features=features,
             )
+        if result.get("error"):
+            self._warn(result["error"])
+            return
         try:
             self.reference_canvas.load_reference(
                 result["draw_records"], result["draw_segments"]
@@ -1295,6 +1298,7 @@ class SectionGeoreferencerDock(QDockWidget):
         self.applied_settings = None
 
     def _reset_gcp_state(self):
+        self._reset_projection_state()
         self.gcps = []
         self.transform_result = None
         self._clear_pending_pick()
@@ -1353,7 +1357,7 @@ class SectionGeoreferencerDock(QDockWidget):
     def _image_replaces_state(self, path):
         """True when the new image invalidates the current GCPs and overlays."""
         if self.image_path is None:
-            return False
+            return bool(self.gcps or self.transform_result is not None or self._has_projection())
         if os.path.abspath(path) == os.path.abspath(self.image_path):
             return False
         return bool(self.gcps or self._has_projection())
@@ -1374,7 +1378,7 @@ class SectionGeoreferencerDock(QDockWidget):
             # Nothing has been discarded yet, so the previous session survives
             # an unreadable file.
             self._warn(str(exc))
-            return
+            return False
         if clear_state:
             self.gcps = []
             self.transform_result = None
@@ -1394,6 +1398,7 @@ class SectionGeoreferencerDock(QDockWidget):
         self._update_workflow_state()
         self._advance_step(STEP_IMAGE)
         self._info("Loaded image: {}".format(os.path.basename(path)))
+        return True
 
     def _clear_image(self):
         self.canvas.clear_image()
@@ -1403,10 +1408,10 @@ class SectionGeoreferencerDock(QDockWidget):
         self._update_add_gcp_state()
         # The scene is gone with the image; drop the overlays it was carrying
         # so the step summary and the exported package cannot disagree with it.
-        self._reset_projection_state()
+        self._reset_gcp_state()
         self._update_image_info()
         self._update_workflow_state()
-        self._info("Image and projected overlays cleared. GCPs are kept.")
+        self._info("Image, GCPs, transform, and projected overlays cleared.")
 
     def _on_canvas_clicked(self, u, v):
         self.current_pixel = (float(u), float(v))
@@ -1458,6 +1463,7 @@ class SectionGeoreferencerDock(QDockWidget):
             self._warn("Select a GCP row to delete.")
             return
         self.gcps.pop(row)
+        self._reset_projection_state()
         self._update_gcp_table()
         self._redraw_gcp_marks()
         if len(self.gcps) >= 3:
@@ -1475,6 +1481,9 @@ class SectionGeoreferencerDock(QDockWidget):
         self._info("GCPs cleared.")
 
     def _compute_transform(self):
+        # Stored u/v and segment pixels belong to the previous transform.
+        had_projection = self._has_projection()
+        self._reset_projection_state()
         try:
             self.transform_result = fit_affine_pixel_to_section(self.gcps)
         except (ImportError, ValueError) as exc:
@@ -1493,6 +1502,8 @@ class SectionGeoreferencerDock(QDockWidget):
         message = "Affine transform computed (RMS {} m from {} GCPs).".format(
             _rms_text(self.transform_result.get("rms")), len(self.gcps)
         )
+        if had_projection:
+            message += " Previous projections cleared; project the layers again in step 5."
         if warnings:
             self._warn("{} CAD deformation warning: {}.".format(message, "; ".join(warnings)))
         else:
@@ -1503,6 +1514,8 @@ class SectionGeoreferencerDock(QDockWidget):
             return
         settings = self._settings_for_use()
         if settings is None:
+            return
+        if not self._projection_prerequisites_ok():
             return
         layer = self.iface.activeLayer()
         project_crs = QgsProject.instance().crs()
@@ -1522,7 +1535,11 @@ class SectionGeoreferencerDock(QDockWidget):
                 settings["z_field"],
                 features=selected_features or None,
             )
+        if result.get("error"):
+            self._warn(result["error"])
+            return
         layer_name = _layer_name(layer)
+        result["source_layer_name"] = layer_name
         notes = []
         if selected_features:
             notes.append(
@@ -1530,8 +1547,8 @@ class SectionGeoreferencerDock(QDockWidget):
                     len(selected_features), layer_name
                 )
             )
-        replaced = layer_name in self.gps_results
-        self.gps_results[layer_name] = result
+        replaced = layer.id() in self.gps_results
+        self.gps_results[layer.id()] = result
         self.applied_settings = dict(settings)
         self._redraw_projected_overlays()
         self._update_workflow_state()
@@ -1550,6 +1567,8 @@ class SectionGeoreferencerDock(QDockWidget):
             return
         settings = self._settings_for_use()
         if settings is None:
+            return
+        if not self._projection_prerequisites_ok():
             return
         layer = self.iface.activeLayer()
         project_crs = QgsProject.instance().crs()
@@ -1570,7 +1589,11 @@ class SectionGeoreferencerDock(QDockWidget):
                 settings["z_field"],
                 features=selected_features or None,
             )
+        if result.get("error"):
+            self._warn(result["error"])
+            return
         layer_name = _layer_name(layer)
+        result["source_layer_name"] = layer_name
         notes = []
         if selected_features:
             # Informational, not a warning: projecting the selection is the
@@ -1580,8 +1603,8 @@ class SectionGeoreferencerDock(QDockWidget):
                     len(selected_features), layer_name
                 )
             )
-        replaced = layer_name in self.plateau_results
-        self.plateau_results[layer_name] = result
+        replaced = layer.id() in self.plateau_results
+        self.plateau_results[layer.id()] = result
         self.applied_settings = dict(settings)
         self._redraw_projected_overlays()
         self._update_workflow_state()
@@ -1705,6 +1728,9 @@ class SectionGeoreferencerDock(QDockWidget):
             return
         if self._settings_for_use() is None:
             return
+        # Applying pending settings can invalidate the transform.
+        if not self._package_prerequisites_ok():
+            return
         default_name = sanitize_package_name(
             "section_package_{}".format(utc_timestamp())
         )
@@ -1748,7 +1774,8 @@ class SectionGeoreferencerDock(QDockWidget):
             "coordinate_model": "section_space",
             "x_axis": "s_along_section",
             "y_axis": "z_section",
-            "crs_authid": package_config.get("crs", ""),
+            "crs_authid": None,
+            "source_crs_authid": package_config.get("crs", ""),
             "warning": (
                 "GeoTIFF coordinates are section coordinates (s,z_section), "
                 "not map x/y. Use the exported config p0/p1 to reconstruct "
@@ -1820,13 +1847,34 @@ class SectionGeoreferencerDock(QDockWidget):
             "gps": _rebuild_summary(_empty_gps_summary(), self.gps_results),
             "plateau": _rebuild_summary(_empty_plateau_summary(), self.plateau_results),
             "source_layers": {
+                "gps": sorted(r["source_layer_name"] for r in self.gps_results.values()),
+                "plateau": sorted(r["source_layer_name"] for r in self.plateau_results.values()),
+            },
+            "source_layer_ids": {
                 "gps": sorted(self.gps_results),
                 "plateau": sorted(self.plateau_results),
+            },
+            "gps_attribute_maps": {
+                layer_id: result.get("attribute_map", {})
+                for layer_id, result in self.gps_results.items()
             },
             "warnings": self._projection_warnings(),
         }
 
     def _apply_config(self, data, config_path):
+        try:
+            data = config_io.validate_config(data)
+            config_crs = data.get("crs")
+            if config_crs and not QgsCoordinateReferenceSystem(config_crs).isValid():
+                raise ValueError("Config has an invalid CRS: {}".format(config_crs))
+            transform = data.get("transform")
+            if transform is not None:
+                transform["deformation"] = analyze_affine_deformation(
+                    transform["pixel_to_section"]
+                )
+        except (ValueError, TypeError) as exc:
+            self._warn("Could not load config; current session kept: {}".format(exc))
+            return False
         load_warnings = []
         # The config replaces the section line, the settings, the GCPs, and
         # the transform, so the PLATEAU reference and anything projected in
@@ -1843,18 +1891,17 @@ class SectionGeoreferencerDock(QDockWidget):
         p1 = section.get("p1")
         project_authid = QgsProject.instance().crs().authid()
         config_authid = str(data.get("crs") or "").strip() or None
-        config_geographic = bool(config_authid) and bool(
+        config_crs_problem = (
             _geographic_crs_problem(QgsCoordinateReferenceSystem(config_authid))
+            if config_authid else ""
         )
-        if p0 and p1 and config_geographic:
+        if p0 and p1 and config_crs_problem:
             # Earlier versions recommended EPSG:6697; such a line and the GCP
             # targets measured along it are in degrees and cannot be reused.
             load_warnings.append(
-                "The config was saved in the geographic CRS {}, so its section "
-                "line and GCP targets are in degrees and were not restored. "
-                "Set a projected CRS such as JGD2011 / Japan Plane Rectangular "
-                "CS (EPSG:6669-6687), redefine the section line, and pick the "
-                "GCPs again.".format(config_authid)
+                "{} The config section line and GCP targets were not restored. "
+                "Redefine the line in a metric projected CRS and pick the GCPs "
+                "again.".format(config_crs_problem)
             )
         elif p0 and p1:
             try:
@@ -1887,7 +1934,7 @@ class SectionGeoreferencerDock(QDockWidget):
         self.z_field_edit.setText(str(projection.get("z_field", "") or ""))
 
         self.gcps = []
-        for gcp in [] if config_geographic else data.get("gcps") or []:
+        for gcp in [] if config_crs_problem else data.get("gcps") or []:
             try:
                 self.gcps.append(
                     {
@@ -1904,7 +1951,7 @@ class SectionGeoreferencerDock(QDockWidget):
             self._projection_settings(report=False) if self.gcps else None
         )
 
-        transform = None if config_geographic else data.get("transform")
+        transform = None if config_crs_problem else data.get("transform")
         if isinstance(transform, dict) and transform.get("pixel_to_section") and transform.get("section_to_pixel"):
             self.transform_result = dict(transform)
             try:
@@ -1923,23 +1970,29 @@ class SectionGeoreferencerDock(QDockWidget):
                 load_warnings.append("CAD deformation warning: {}.".format("; ".join(warnings)))
 
         image_path = (data.get("image") or {}).get("path")
+        # A missing, empty, or unreadable new image must never retain the
+        # previous session's image under this config's transform.
+        self.canvas.clear_image()
         self.image_path = None
         if image_path:
             resolved = config_io.resolve_image_path(image_path, config_path)
             if os.path.exists(resolved):
-                self._load_image(resolved)
+                if not self._load_image(resolved):
+                    load_warnings.append("Config image could not be loaded: {}".format(resolved))
             else:
                 self.canvas.clear_image()
                 self._redraw_gcp_marks()
                 load_warnings.append("Image path in config does not exist: {}".format(resolved))
         else:
             self._redraw_gcp_marks()
+        self._update_image_info()
         self._update_reference_overlay()
         self._update_workflow_state()
         if load_warnings:
             self._warn("Config loaded with warning: {}".format(" ".join(load_warnings)))
         else:
             self._info("Config loaded.")
+        return True
 
     def _projection_prerequisites_ok(self):
         if self.section_p0 is None or self.section_p1 is None:
@@ -2133,7 +2186,9 @@ class SectionGeoreferencerDock(QDockWidget):
 
     def _source_layer_names(self):
         return _dedupe(
-            [name for name in list(self.gps_results) + list(self.plateau_results) if name]
+            [r["source_layer_name"] for r in
+             list(self.gps_results.values()) + list(self.plateau_results.values())
+             if r["source_layer_name"]]
         )
 
     def _update_image_info(self):
@@ -2390,7 +2445,10 @@ class SectionGeoreferencerDock(QDockWidget):
     def _float_from_edit(self, edit, label):
         text = edit.text().strip()
         try:
-            return float(text)
+            value = float(text)
+            if not math.isfinite(value):
+                raise ValueError()
+            return value
         except ValueError as exc:
             raise ValueError("{} must be a number.".format(label)) from exc
 
@@ -2443,6 +2501,8 @@ def _geographic_crs_problem(crs):
                 crs.authid() or crs.description()
             )
         )
+    if crs.mapUnits() != QgsUnitTypes.DistanceMeters:
+        return "Set a projected CRS in metres; section distance and height must use the same unit."
     return ""
 
 

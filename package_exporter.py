@@ -163,7 +163,7 @@ def _export_section_geotiff_if_possible(canvas, path, config):
     if not pixel_to_section:
         return
     geotiff = config.get("geotiff") or {}
-    crs_auth_id = geotiff.get("crs_authid") or None
+    crs_auth_id = geotiff.get("source_crs_authid") or config.get("crs") or None
     canvas.export_section_geotiff(path, pixel_to_section, crs_auth_id)
 
 
@@ -316,6 +316,8 @@ def _world_point_feature(record, source_type):
         coordinates.append(_json_value(z_raw))
     properties = {
         "source": source_type,
+        "source_layer_id": record.get("source_layer_id"),
+        "source_fid": record.get("source_fid"),
         "s": _json_value(record.get("s")),
         "d": _json_value(record.get("d")),
         "z_section": _json_value(record.get("z_section")),
@@ -371,6 +373,8 @@ def _write_gpkg_point_layer(ds, name, records, srs):
         ("z_section", ogr.OFTReal),
         ("inside_buffer", ogr.OFTInteger),
         ("layer_name", ogr.OFTString),
+        ("source_layer_id", ogr.OFTString),
+        ("source_fid", ogr.OFTInteger64),
     ]:
         layer.CreateField(ogr.FieldDefn(field, ftype))
     for record in records:
@@ -386,6 +390,9 @@ def _write_gpkg_point_layer(ds, name, records, srs):
         feat.SetField("z_section", float(record.get("z_section", 0)))
         feat.SetField("inside_buffer", 1 if record.get("inside_buffer") else 0)
         feat.SetField("layer_name", str(record.get("layer_name") or ""))
+        feat.SetField("source_layer_id", str(record.get("source_layer_id") or ""))
+        if record.get("source_fid") is not None:
+            feat.SetField("source_fid", int(record["source_fid"]))
         layer.CreateFeature(feat)
 
 
@@ -401,6 +408,8 @@ def _write_gpkg_segment_layer(ds, name, segments, srs):
         ("s1", ogr.OFTReal),
         ("z1", ogr.OFTReal),
         ("layer_name", ogr.OFTString),
+        ("source_layer_id", ogr.OFTString),
+        ("source_fid", ogr.OFTInteger64),
     ]:
         layer.CreateField(ogr.FieldDefn(field, ftype))
     for seg in segments:
@@ -418,6 +427,9 @@ def _write_gpkg_segment_layer(ds, name, segments, srs):
         feat.SetField("s1", float(seg.get("s1", 0)))
         feat.SetField("z1", float(seg.get("z1", 0)))
         feat.SetField("layer_name", str(seg.get("layer_name") or ""))
+        feat.SetField("source_layer_id", str(seg.get("source_layer_id") or ""))
+        if seg.get("source_fid") is not None:
+            feat.SetField("source_fid", int(seg["source_fid"]))
         layer.CreateFeature(feat)
 
 

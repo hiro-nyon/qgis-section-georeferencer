@@ -177,5 +177,20 @@ class ImageOverlayTests(unittest.TestCase):
         self.assertEqual(levels[0].width(), 2000)
 
 
+    def test_geotiff_has_local_section_crs_and_preserves_affine(self):
+        from osgeo import gdal, osr
+        path = os.path.join(self.tempdir.name, "section.tif")
+        coeffs = {"s": [10, 0.5, 0.1], "z": [50, 0.2, -0.5]}
+        self.view.export_section_geotiff(path, coeffs, "EPSG:6677")
+        ds = gdal.Open(path)
+        srs = osr.SpatialReference(wkt=ds.GetProjection())
+        self.assertTrue(srs.IsLocal())
+        self.assertIsNone(srs.GetAuthorityCode(None))
+        self.assertEqual(ds.GetMetadataItem("SECTION_SOURCE_CRS"), "EPSG:6677")
+        self.assertEqual(ds.GetGeoTransform(), (10, 0.5, 0.1, 50, 0.2, -0.5))
+        self.assertEqual((ds.RasterXSize, ds.RasterYSize), (4000, 3000))
+        ds = None
+
+
 if __name__ == "__main__":
     unittest.main()
