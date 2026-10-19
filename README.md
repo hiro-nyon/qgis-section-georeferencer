@@ -45,9 +45,10 @@ message bar.
 4. **1. Building** — choose the PLATEAU/CAD building layer in the list (polygon
    layers of the project), click **Pick on map**, and click the building on the
    QGIS map. Shift-click (or Cmd-click) adds or removes more buildings; Esc or
-   right-click finishes. The picked building is selected in its layer, so it is
-   highlighted on the map and **PLATEAU/CAD** in step 5 projects the same
-   building. **Use QGIS selection** takes the features already selected in the
+   right-click finishes. The picked building's footprint is filled orange with a
+   red outline on the map (while the plugin window is open) so it stands out
+   from any layer style. It is also selected in its layer, so **PLATEAU/CAD** in
+   step 5 projects the same building. **Use QGIS selection** takes the features already selected in the
    active layer instead.
 5. **2. Section line** — draw the line through the picked building with **Draw
    on map** (two clicks on the QGIS map canvas), **Manual** (the coordinate

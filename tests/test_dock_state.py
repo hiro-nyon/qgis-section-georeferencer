@@ -458,6 +458,39 @@ class DockStateTests(unittest.TestCase):
         self.assertIsNone(self.dock.building_pick_tool)
         self.iface.window.hide()
 
+    def test_picked_building_is_highlighted_on_the_map(self):
+        layer = self.building_layer()
+        fid = next(layer.getFeatures()).id()
+        self.dock._set_building(layer, [fid])
+        highlight = self.dock.building_highlight
+        self.assertIsNotNone(highlight)
+        self.assertIs(highlight.scene(), self.iface.canvas.scene())
+        self.assertEqual(
+            highlight.fillColor().name(), self.dock_module.BUILDING_FILL_COLOR.name()
+        )
+        # Hidden with the plugin window, shown again with it.
+        self.dock.set_orientation_guide_visible(False)
+        self.assertFalse(highlight.isVisible())
+        self.dock.set_orientation_guide_visible(True)
+        self.assertTrue(highlight.isVisible())
+        self.dock._clear_plateau_reference()
+        self.assertIsNone(self.dock.building_highlight)
+        self.assertIsNone(highlight.scene())
+
+    def test_footprint_of_lod2_faces(self):
+        from qgis.core import QgsGeometry
+
+        # Roof face plus vertical wall faces that are zero-area slivers in 2D.
+        building = QgsGeometry.fromWkt(
+            "MultiPolygonZ(((0 0 10, 10 0 10, 10 8 10, 0 8 10, 0 0 10)),"
+            "((0 0 0, 10 0 0, 10 0 10, 0 0 10, 0 0 0)),"
+            "((10 0 0, 10 8 0, 10 8 10, 10 0 10, 10 0 0)))"
+        )
+        footprint = self.dock_module.building_footprint([building])
+        self.assertAlmostEqual(footprint.area(), 80.0)
+        self.assertFalse(footprint.constGet().is3D())
+        self.assertIsNone(self.dock_module.building_footprint([]))
+
     def test_qgis_selection_can_still_be_used(self):
         layer = self.building_layer()
         layer.selectAll()

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- A building picked in step 1 is drawn on the map with an orange footprint
+  fill and a red outline, so it stands out from the layer style and from other
+  buildings; it is hidden with the plugin window and removed by **Clear**.
+
 ## 0.2.0 (2026-10-19)
 
 ### Changed (UI/UX)

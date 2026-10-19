@@ -38,6 +38,7 @@ from qgis.core import (
     QgsCoordinateTransform,
     QgsFeature,
     QgsFeatureRequest,
+    QgsGeometry,
     QgsMapLayerProxyModel,
     QgsPointXY,
     QgsProject,
@@ -45,6 +46,7 @@ from qgis.core import (
     QgsWkbTypes,
 )
 from qgis.gui import (
+    QgsHighlight,
     QgsMapLayerComboBox,
     QgsMapTool,
     QgsMapToolIdentifyFeature,
@@ -220,6 +222,9 @@ class SectionGeoreferencerDock(QDockWidget):
         # The PLATEAU building(s) the section is about: layer id + feature ids.
         self.building_layer_id = None
         self.building_fids = []
+        # Map overlay that marks the picked building(s).
+        self.building_highlight = None
+        self._guide_visible = True
         self.orientation_guide = None
         self._build_ui()
         try:
@@ -956,6 +961,7 @@ class SectionGeoreferencerDock(QDockWidget):
             self.building_layer_combo.setLayer(layer)
         self.building_info_label.setText(_building_summary(layer, self.building_fids))
         self.building_info_label.setStyleSheet("font-size: 11px; color: palette(text);")
+        self._update_building_highlight()
         if self.section_p0 is not None and self.section_p1 is not None:
             self._load_plateau_reference()
         else:
@@ -964,6 +970,49 @@ class SectionGeoreferencerDock(QDockWidget):
                 "Building selected. Next, draw the section line through it in step 2."
             )
         self._advance_step(STEP_BUILDING)
+
+    def _update_building_highlight(self):
+        """Fill the picked building's footprint on the map in a colour that
+        stands out from any layer style and from the QGIS selection."""
+        self._remove_building_highlight()
+        layer = self._building_layer()
+        if layer is None or not self.building_fids:
+            return
+        try:
+            canvas = self.iface.mapCanvas()
+        except Exception:
+            return
+        geometries = [
+            feature.geometry()
+            for feature in layer.getFeatures(
+                QgsFeatureRequest().setFilterFids(self.building_fids)
+            )
+        ]
+        footprint = building_footprint(geometries)
+        if footprint is None:
+            # No roof area in plan (e.g. walls only): outline what there is.
+            geometries = [g for g in geometries if g is not None and not g.isEmpty()]
+            if not geometries:
+                return
+            footprint = QgsGeometry.collectGeometry(geometries)
+        highlight = QgsHighlight(canvas, footprint, layer)
+        highlight.setColor(BUILDING_OUTLINE_COLOR)
+        highlight.setFillColor(BUILDING_FILL_COLOR)
+        highlight.setWidth(3)
+        highlight.setVisible(self._guide_visible)
+        self.building_highlight = highlight
+
+    def _remove_building_highlight(self):
+        highlight = self.building_highlight
+        self.building_highlight = None
+        if highlight is None:
+            return
+        try:
+            scene = highlight.scene()
+            if scene is not None:
+                scene.removeItem(highlight)
+        except Exception:
+            pass
 
     def _building_layer(self):
         if not self.building_layer_id:
@@ -979,6 +1028,7 @@ class SectionGeoreferencerDock(QDockWidget):
                 pass
         self.building_layer_id = None
         self.building_fids = []
+        self._remove_building_highlight()
         self.building_info_label.setText(_NO_BUILDING_TEXT)
         self.building_info_label.setStyleSheet("font-size: 11px; color: palette(dark);")
 
@@ -1254,9 +1304,13 @@ class SectionGeoreferencerDock(QDockWidget):
         self._update_transform_label()
 
     def set_orientation_guide_visible(self, visible):
-        """Show the map guide only while this plugin's dock is visible."""
+        """Show the map guide and the building highlight only while this
+        plugin's window is visible."""
+        self._guide_visible = bool(visible)
         if self.orientation_guide is not None:
             self.orientation_guide.set_visible(visible)
+        if self.building_highlight is not None:
+            self.building_highlight.setVisible(self._guide_visible)
 
     def cleanup(self):
         """Remove map-canvas items owned by this dock before plugin unload."""
@@ -1280,6 +1334,7 @@ class SectionGeoreferencerDock(QDockWidget):
         if self.orientation_guide is not None:
             self.orientation_guide.dispose()
             self.orientation_guide = None
+        self._remove_building_highlight()
 
     def _load_image_dialog(self):
         path, _filter = QFileDialog.getOpenFileName(
@@ -2403,6 +2458,36 @@ def _same_xy(a, b):
 _NO_PIXEL_TEXT = "Picked pixel: - (click the section image)"
 _NO_BUILDING_TEXT = "No building yet. Click 'Pick on map', then click the building on the QGIS map."
 _NO_REFERENCE_TEXT = "The reference section appears once the section line (step 2) is drawn."
+
+
+BUILDING_FILL_COLOR = QColor(255, 110, 0, 150)
+BUILDING_OUTLINE_COLOR = QColor(214, 40, 40)
+
+
+def building_footprint(geometries):
+    """2D footprint of building geometries, or None.
+
+    A PLATEAU LOD2 building is a MultiPolygonZ of roof and wall faces; the
+    walls project to zero-area slivers and some faces are invalid in 2D, so
+    each face is flattened and repaired before the union.
+    """
+    pieces = []
+    for geometry in geometries:
+        if geometry is None or geometry.isEmpty():
+            continue
+        for part in geometry.constParts():
+            flat = part.clone()
+            flat.dropZValue()
+            flat.dropMValue()
+            piece = QgsGeometry(flat).makeValid()
+            if not piece.isEmpty() and piece.area() > 1e-6:
+                pieces.append(piece)
+    if not pieces:
+        return None
+    footprint = QgsGeometry.unaryUnion(pieces)
+    if footprint is None or footprint.isEmpty():
+        footprint = QgsGeometry.collectGeometry(pieces)
+    return footprint
 
 
 def _polygon_layer_filter():
