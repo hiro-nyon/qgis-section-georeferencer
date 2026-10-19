@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Picking a building in a mixed-LOD layer now uses the highest LOD of the same
+  object instead of the first overlapping feature (often LOD1). The UI shows
+  the selected LOD; selection toggling resolves to the same object and clearing
+  the last building also clears its reference section.
 - GCP fitting, deletion and clearing invalidate both GPS and PLATEAU projected
   results, preventing old pixels from being exported with a new transform.
 - Section GeoTIFFs use a local engineering CRS in metres. The original map CRS

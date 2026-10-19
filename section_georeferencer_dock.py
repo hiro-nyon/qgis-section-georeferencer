@@ -36,6 +36,7 @@ from qgis.core import (
     Qgis,
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
+    QgsExpression,
     QgsFeature,
     QgsFeatureRequest,
     QgsGeometry,
@@ -892,10 +893,11 @@ class SectionGeoreferencerDock(QDockWidget):
         if additive:
             # Shift/Cmd-click toggles this building and keeps the tool active.
             fids = list(self.building_fids) if self.building_layer_id == layer.id() else []
-            if feature.id() in fids:
-                fids.remove(feature.id())
+            picked = _highest_lod_building_fids(layer, [feature.id()])
+            if all(fid in fids for fid in picked):
+                fids = [fid for fid in fids if fid not in picked]
             else:
-                fids.append(feature.id())
+                fids.extend(fid for fid in picked if fid not in fids)
             self._set_building(layer, fids)
             return
         self._finish_building_pick()
@@ -948,9 +950,9 @@ class SectionGeoreferencerDock(QDockWidget):
         They are also selected in their layer, so they are highlighted on the
         map and 'PLATEAU/CAD' in step 5 projects the same building.
         """
+        fids = _highest_lod_building_fids(layer, fids)
         if not fids:
-            self._clear_building()
-            self._update_workflow_state()
+            self._clear_plateau_reference()
             self._info("No building selected.")
             return
         previous = self._building_layer()
@@ -2559,6 +2561,51 @@ def _polygon_layer_filter():
     return QgsMapLayerProxyModel.PolygonLayer
 
 
+def _highest_lod_building_fids(layer, fids):
+    """Resolve mixed-LOD copies of a picked object within the same layer.
+
+    QGIS identifies overlapping features in provider order, not LOD order.
+    Require a shared object identifier; never infer identity from overlap or
+    upgrade across layers. Source, object type and part IDs keep distinct
+    datasets, semantic surfaces and building parts separate.
+    """
+    fields = {name.lower(): name for name in layer.fields().names()}
+    lod_field = fields.get("lod")
+    if lod_field is None:
+        return list(dict.fromkeys(fids))
+    groups = {}
+    resolved = []
+    for fid in fids:
+        feature = layer.getFeature(fid)
+        if not feature.isValid():
+            continue
+        identity = next((fields[name] for name in
+                         ("gml_id", "gmlid", "buildingid", "building_id", "bldg_id", "id")
+                         if name in fields and str(feature[fields[name]]) not in ("", "NULL", "None")), None)
+        if identity is None:
+            resolved.append(fid)
+            continue
+        keys = [identity] + [fields[name] for name in ("source", "type", "partid", "branchid")
+                             if name in fields and fields[name] != identity]
+        expression = " AND ".join(QgsExpression.createFieldEqualityExpression(key, feature[key]) for key in keys)
+        if expression not in groups:
+            best_lod, best_fids = -1, []
+            for candidate in layer.getFeatures(QgsFeatureRequest().setFilterExpression(expression)):
+                try:
+                    lod = float(candidate[lod_field])
+                except (TypeError, ValueError):
+                    continue
+                if not math.isfinite(lod) or lod < 0 or candidate.geometry().isEmpty():
+                    continue
+                if lod > best_lod:
+                    best_lod, best_fids = lod, [candidate.id()]
+                elif lod == best_lod:
+                    best_fids.append(candidate.id())
+            groups[expression] = best_fids
+        resolved.extend(groups[expression] or [fid])
+    return list(dict.fromkeys(resolved))
+
+
 def _building_summary(layer, fids):
     """One line describing the picked building(s)."""
     if len(fids) != 1:
@@ -2578,6 +2625,9 @@ def _building_summary(layer, fids):
         return None
 
     parts = []
+    lod = value("lod", "LOD", "LoD")
+    if lod is not None:
+        parts.append("LOD{}".format(lod))
     identifier = value("name", "buildingID", "gml_id", "id")
     if identifier is not None:
         parts.append(str(identifier))

@@ -327,6 +327,38 @@ class DockStateTests(unittest.TestCase):
         self.assertFalse(footprint.constGet().is3D())
         self.assertIsNone(self.dock_module.building_footprint([]))
 
+    def test_mixed_lods_use_highest_for_same_building_and_keep_toggle_selection(self):
+        from qgis.PyQt.QtCore import Qt
+
+        layer = self.layer(
+            "PolygonZ?crs=" + PROJECTED + "&field=buildingID:string&field=lod:integer&field=partID:integer",
+            ["PolygonZ((0 0 0,10 0 0,10 0 4,0 0 4,0 0 0))",
+             "PolygonZ((0 0 0,10 0 0,10 0 8,5 0 12,0 0 8,0 0 0))",
+             "PolygonZ((0 0 0,10 0 0,10 0 30,0 0 30,0 0 0))",
+             "PolygonZ((0 0 0,10 0 0,10 0 40,0 0 40,0 0 0))"],
+        )
+        low, high, other, part = [f.id() for f in layer.getFeatures()]
+        layer.dataProvider().changeAttributeValues({
+            low: {0: "building-a", 1: 1}, high: {0: "building-a", 1: 2},
+            other: {0: "building-b", 1: 3}, part: {0: "building-a", 1: 3, 2: 1},
+        })
+        self.dock._set_section((0, 0), (10, 0))
+        self.dock.building_pick_layer = layer
+        # QGIS identifies the first overlapping feature, which can be LOD1.
+        self.dock._on_building_picked(layer.getFeature(low), Qt.NoModifier)
+        self.assertEqual(self.dock.building_fids, [high])
+        self.assertEqual(max(r["z_raw"] for r in self.dock.reference_records), 12)
+        self.assertIn("LOD2", self.dock.building_info_label.text())
+        self.assertEqual({r["source_fid"] for r in self.dock.reference_canvas.records}, {high})
+        # Shift-click on the same LOD1 hit must remove the selected LOD2 building.
+        self.dock._on_building_picked(layer.getFeature(low), Qt.ShiftModifier)
+        self.assertEqual(self.dock.building_fids, [])
+        self.assertEqual(self.dock.reference_records, [])
+        self.iface.layer = layer
+        layer.selectByIds([low, high])
+        self.dock._use_qgis_selection_as_building()
+        self.assertEqual(self.dock.building_fids, [high])
+
     def test_gcp_edit_invalidates_both_projection_types_and_reprojection_matches(self):
         self.full_session()
         self.iface.layer = self.dock._building_layer()

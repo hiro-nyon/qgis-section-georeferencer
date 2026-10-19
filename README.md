@@ -75,7 +75,10 @@ message bar.
    red outline on the map (while the plugin window is open) so it stands out
    from any layer style. It is also selected in its layer, so **PLATEAU/CAD** in
    step 5 projects the same building. **Use QGIS selection** takes the features already selected in the
-   active layer instead.
+   active layer instead. If the same building object occurs at several LODs in
+   that layer, the highest available LOD is used; the picked-building label
+   shows its LOD. Matching requires an object ID and respects source, object
+   type and part IDs. Other layers are not searched automatically.
 5. **2. Section line** — draw the line through the picked building with **Draw
    on map** (two clicks on the QGIS map canvas), **Manual** (the coordinate
    fields), or **From line** (a selected line feature). P0 is the left end
