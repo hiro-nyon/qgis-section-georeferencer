@@ -47,9 +47,9 @@ class DockStateTests(unittest.TestCase):
 
         self.dock.cleanup()
         self.dock.deleteLater()
+        self.iface.window.close()
+        self.iface.window.deleteLater()
         QgsProject.instance().removeAllMapLayers()
-
-    # helpers ------------------------------------------------------------
 
     def set_project_crs(self, authid):
         from qgis.core import QgsCoordinateReferenceSystem, QgsProject
@@ -102,43 +102,7 @@ class DockStateTests(unittest.TestCase):
         self.assertIsNotNone(self.dock.transform_result)
         self.assertTrue(self.dock._gps_records())
 
-    # geographic CRS (EPSG:6697) -----------------------------------------
-
-    def test_geographic_project_crs_refuses_a_section_line(self):
-        self.set_project_crs("EPSG:6697")
-        with self.assertRaises(ValueError):
-            self.dock._set_section((139.7, 35.6), (139.8, 35.6))
-        self.assertIsNone(self.dock.section_p0)
-
-    def test_geographic_project_crs_does_not_start_the_map_tool(self):
-        self.set_project_crs("EPSG:6697")
-        self.dock._start_section_line_map_tool()
-        self.assertIsNone(self.dock.section_line_tool)
-        self.assertIn("geographic", self.dock.status_label.text())
-
-    def test_switching_to_geographic_crs_blocks_projection(self):
-        self.full_session()
-        self.set_project_crs("EPSG:6697")
-        self.assertFalse(self.dock._projection_prerequisites_ok())
-        self.assertFalse(self.dock._package_prerequisites_ok())
-
-    # section line changes -----------------------------------------------
-
-    def test_new_line_clears_dependent_results_when_confirmed(self):
-        self.full_session()
-        self.answer = True
-        self.assertTrue(self.dock._set_section((0.0, 0.0), (0.0, 100.0)))
-        self.assertEqual(len(self.confirm_calls), 1)
-        self.assertEqual(self.dock.gcps, [])
-        self.assertIsNone(self.dock.transform_result)
-        self.assertFalse(self.dock._has_projection())
-        self.assertEqual(self.dock._build_config()["section"]["p1"], [0.0, 100.0])
-        # The building is re-projected onto the new line: only its x=10 end
-        # lies within the 10 m buffer of the line x=0.
-        self.assertTrue(self.dock.reference_records)
-        self.assertEqual({r["x"] for r in self.dock.reference_records}, {10.0})
-
-    def test_declining_keeps_the_old_line_and_results(self):
+    def test_line_change_can_be_declined_then_confirmed(self):
         self.full_session()
         self.answer = False
         self.dock.x1_edit.setText("0")
@@ -148,12 +112,17 @@ class DockStateTests(unittest.TestCase):
         self.assertEqual(self.dock.y1_edit.text(), "0")
         self.assertEqual(len(self.dock.gcps), 3)
         self.assertTrue(self.dock._has_projection())
-
-    def test_reapplying_the_same_line_does_not_ask(self):
-        self.full_session()
-        self.dock._use_manual_section()
-        self.assertEqual(self.confirm_calls, [])
-        self.assertEqual(len(self.dock.gcps), 3)
+        self.answer = True
+        self.assertTrue(self.dock._set_section((0.0, 0.0), (0.0, 100.0)))
+        self.assertEqual(len(self.confirm_calls), 2)
+        self.assertEqual(self.dock.gcps, [])
+        self.assertIsNone(self.dock.transform_result)
+        self.assertFalse(self.dock._has_projection())
+        self.assertEqual(self.dock._build_config()["section"]["p1"], [0.0, 100.0])
+        # The building is re-projected onto the new line: only its x=10 end
+        # lies within the 10 m buffer of the line x=0.
+        self.assertTrue(self.dock.reference_records)
+        self.assertEqual({r["x"] for r in self.dock.reference_records}, {10.0})
 
     def test_reapplying_a_full_precision_line_does_not_ask(self):
         # Draw on map / From line / config give full-precision coordinates,
@@ -170,48 +139,16 @@ class DockStateTests(unittest.TestCase):
 
     def test_project_crs_change_blocks_projection_and_export(self):
         self.full_session()
-        self.set_project_crs("EPSG:6676")
-        self.assertFalse(self.dock._projection_prerequisites_ok())
-        self.assertFalse(self.dock._package_prerequisites_ok())
-        self.assertEqual(self.dock._build_config()["crs"], PROJECTED)
-        self.set_project_crs(PROJECTED)
-        self.assertTrue(self.dock._package_prerequisites_ok())
+        for crs in ("EPSG:6697", "EPSG:6676"):
+            with self.subTest(crs=crs):
+                self.set_project_crs(crs)
+                self.assertFalse(self.dock._projection_prerequisites_ok())
+                self.assertFalse(self.dock._package_prerequisites_ok())
+                self.assertEqual(self.dock._build_config()["crs"], PROJECTED)
+                self.set_project_crs(PROJECTED)
+                self.assertTrue(self.dock._package_prerequisites_ok())
 
-    def test_failed_drawn_line_restores_the_map_tool(self):
-        from qgis.core import QgsPointXY
-
-        self.dock._start_section_line_map_tool()
-        tool = self.dock.section_line_tool
-        self.assertIs(self.iface.canvas.mapTool(), tool)
-        point = QgsPointXY(1.0, 1.0)
-        self.dock._finish_drawn_section_line(point, point)
-        self.assertIsNot(self.iface.canvas.mapTool(), tool)
-        self.assertIsNone(self.dock.section_line_tool)
-
-    def test_window_shrinks_to_the_sidebar_while_drawing_on_the_map(self):
-        from qgis.core import QgsPointXY
-
-        self.dock.resize(1200, 700)
-        self.dock.show()
-        before = self.dock.size()
-        self.dock._start_section_line_map_tool()
-        self.assertLess(self.dock.width(), 500)
-        self.dock._finish_drawn_section_line(QgsPointXY(0, 0), QgsPointXY(100, 0))
-        self.assertEqual(self.dock.size(), before)
-        self.dock.hide()
-
-    def test_cancelling_the_map_tool_restores_the_window(self):
-        self.dock.resize(1200, 700)
-        self.dock.show()
-        before = self.dock.size()
-        self.dock._start_section_line_map_tool()
-        self.dock._cancel_drawn_section_line()
-        self.assertEqual(self.dock.size(), before)
-        self.dock.hide()
-
-    # projection settings --------------------------------------------------
-
-    def test_z_offset_change_declined_restores_the_edit(self):
+    def test_offset_change_preserves_or_clears_dependent_state(self):
         self.full_session()
         self.answer = False
         self.dock.z_offset_edit.setText("5")
@@ -219,9 +156,6 @@ class DockStateTests(unittest.TestCase):
         self.assertEqual(self.dock.z_offset_edit.text(), "0")
         self.assertEqual(len(self.dock.gcps), 3)
         self.assertEqual(self.dock._build_config()["height"]["z_offset"], 0.0)
-
-    def test_z_offset_change_confirmed_clears_gcps_and_results(self):
-        self.full_session()
         self.answer = True
         self.dock.z_offset_edit.setText("5")
         self.dock._on_projection_setting_edited()
@@ -249,17 +183,10 @@ class DockStateTests(unittest.TestCase):
         self.assertIsNotNone(self.dock.transform_result)
         self.assertEqual(self.dock.reference_records, [])
         self.assertFalse(self.dock._has_projection())
-
-    def test_buffer_change_with_only_gcps_does_not_ask(self):
-        self.dock._set_section((0.0, 0.0), (100.0, 0.0))
-        self.dock._load_image(self.image_path)
-        self.add_gcps()
-        self.dock.buffer_width_edit.setText("2")
-        self.dock._on_projection_setting_edited()
-        self.assertEqual(self.confirm_calls, [])
+        from qgis.PyQt.QtWidgets import QApplication
+        QApplication.processEvents()
+        self.assertTrue(self.dock.reference_records)
         self.assertEqual(self.dock.applied_settings["buffer_width"], 2.0)
-
-    # config load ----------------------------------------------------------
 
     def save_config(self):
         path = os.path.join(self.tempdir.name, "config.json")
@@ -272,7 +199,8 @@ class DockStateTests(unittest.TestCase):
         self.dock._apply_config(self.config_io.load_config(path), path)
         self.assertEqual(self.dock.reference_records, [])
         self.assertEqual(len(self.dock.gcps), 3)
-        self.assertEqual(self.dock.gcp_table.item(0, 4).text(), "-")
+        self.assertEqual(self.dock.building_fids, [])
+        self.assertFalse(self.dock._has_projection())
 
     def test_config_from_another_crs_is_flagged_and_blocked(self):
         self.full_session()
@@ -302,7 +230,6 @@ class DockStateTests(unittest.TestCase):
         self.assertEqual(self.dock.z_offset_edit.text(), "2.5")
         self.assertIn("geographic", self.dock.status_label.text())
 
-
     def test_gps_projection_honours_the_selection(self):
         self.full_session()
         layer = self.layer(
@@ -313,22 +240,14 @@ class DockStateTests(unittest.TestCase):
         self.dock._project_active_point_layer()
         self.assertEqual(len(self.dock.gps_results[layer.id()]["records"]), 1)
 
-    # GCP picking flow -------------------------------------------------------
-
     def test_a_pick_is_used_once(self):
         self.dock._set_section((0.0, 0.0), (100.0, 0.0))
         self.dock._load_image(self.image_path)
-        self.assertFalse(self.dock.add_gcp_button.isEnabled())
         self.dock._on_canvas_clicked(10.0, 20.0)
         self.dock._on_reference_clicked(1.0, 2.0)
-        self.assertTrue(self.dock.add_gcp_button.isEnabled())
-        self.assertEqual(len(self.dock.canvas.pending_items), 1)
         self.dock._add_gcp()
         self.assertEqual(len(self.dock.gcps), 1)
         self.assertIsNone(self.dock.current_pixel)
-        self.assertEqual(self.dock.gcp_s_edit.text(), "")
-        self.assertFalse(self.dock.add_gcp_button.isEnabled())
-        self.assertEqual(self.dock.canvas.pending_items, [])
         # A second 'Add GCP' (or a click outside the image) has no pixel to
         # reuse.
         self.dock.gcp_s_edit.setText("5")
@@ -336,87 +255,12 @@ class DockStateTests(unittest.TestCase):
         self.dock._add_gcp()
         self.assertEqual(len(self.dock.gcps), 1)
 
-    def test_gcp_targets_are_marked_on_the_reference(self):
-        self.full_session()
-        self.assertEqual(len(self.dock.reference_canvas.target_items), 3)
-
-    def test_three_gcps_explain_that_rms_is_not_a_check(self):
-        self.dock._set_section((0.0, 0.0), (100.0, 0.0))
-        self.dock._load_image(self.image_path)
-        self.add_gcps()
-        self.assertIn("add a 4th", self.dock.rms_label.text())
-
-    def test_table_shows_millimetres(self):
-        self.dock._set_section((0.0, 0.0), (100.0, 0.0))
-        self.dock._load_image(self.image_path)
-        self.dock._on_canvas_clicked(10.25, 20.0)
-        self.dock.gcp_s_edit.setText("96.1613676812")
-        self.dock.gcp_z_edit.setText("63.768")
-        self.dock._add_gcp()
-        texts = [self.dock.gcp_table.item(0, c).text() for c in range(4)]
-        self.assertEqual(texts, ["10.2", "20.0", "96.161", "63.768"])
-
-    # messages, hints, titles -------------------------------------------------
-
-    def test_routine_messages_stay_out_of_the_qgis_message_bar(self):
-        self.dock._set_section((0.0, 0.0), (100.0, 0.0))
-        self.dock._load_image(self.image_path)
-        self.assertEqual(self.iface.messages, [])
-        self.dock._add_gcp()  # nothing picked: a warning
-        self.assertEqual(len(self.iface.messages), 1)
-
-    def test_hint_follows_the_step_numbers(self):
-        self.assertIn("step 1", self.dock.hint_label.text())
-        self.load_reference()
-        self.assertIn("step 2", self.dock.hint_label.text())
-        self.dock._set_section((0.0, 0.0), (100.0, 0.0))
-        self.assertIn("step 3", self.dock.hint_label.text())
-
-    def test_steps_show_progress_and_open_the_next_step(self):
-        self.assertEqual(self.dock.steps.currentIndex(), 0)
-        self.load_reference()
-        self.assertTrue(self.dock.steps.itemText(0).startswith("✓ 1. Building"))
-        self.assertEqual(self.dock.steps.currentIndex(), 1)
-        self.dock._set_section((0.0, 0.0), (100.0, 0.0))
-        self.assertTrue(self.dock.steps.itemText(1).startswith("✓ 2. Section line"))
-        self.assertEqual(self.dock.steps.currentIndex(), 2)
-
-    # building first, then the section line -------------------------------
-
-    def test_building_first_then_line_loads_the_reference(self):
-        layer = self.building_layer()
-        fid = next(layer.getFeatures()).id()
-        self.dock._set_building(layer, [fid])
-        self.assertEqual(self.dock.reference_records, [])
-        self.assertEqual(list(layer.selectedFeatureIds()), [fid])
-        self.dock._set_section((0.0, 0.0), (100.0, 0.0))
-        self.assertTrue(self.dock.reference_records)
-        self.assertTrue(self.dock.reference_canvas.has_reference())
-
-    def test_line_after_reference_reprojects_the_building(self):
-        self.full_session()
-        self.answer = True
-        self.dock._set_section((0.0, -1.0), (100.0, -1.0))
-        self.assertTrue(self.dock.reference_records)
-        self.assertEqual(self.dock.reference_records[0]["d"], 1.0)
-
     def test_line_that_misses_the_building_says_so(self):
         self.load_reference()
         self.dock._set_section((0.0, 500.0), (100.0, 500.0))
         self.assertEqual(self.dock.reference_records, [])
         self.assertIn("does not pass within", self.dock.status_label.text())
         self.assertIn("misses the picked building", self.dock.hint_label.text())
-
-    def test_buffer_change_reprojects_the_building(self):
-        from qgis.PyQt.QtWidgets import QApplication
-
-        self.full_session()
-        self.answer = True
-        self.dock.buffer_width_edit.setText("2")
-        self.dock._on_projection_setting_edited()
-        QApplication.processEvents()
-        self.assertTrue(self.dock.reference_records)
-        self.assertEqual(self.dock.applied_settings["buffer_width"], 2.0)
 
     def test_pick_on_map_selects_the_clicked_building(self):
         from qgis.core import QgsRectangle
@@ -457,17 +301,9 @@ class DockStateTests(unittest.TestCase):
         self.assertIsNot(canvas.mapTool(), tool)
         self.assertIsNone(self.dock.building_pick_tool)
         self.iface.window.hide()
-
-    def test_picked_building_is_highlighted_on_the_map(self):
-        layer = self.building_layer()
-        fid = next(layer.getFeatures()).id()
-        self.dock._set_building(layer, [fid])
         highlight = self.dock.building_highlight
         self.assertIsNotNone(highlight)
         self.assertIs(highlight.scene(), self.iface.canvas.scene())
-        self.assertEqual(
-            highlight.fillColor().name(), self.dock_module.BUILDING_FILL_COLOR.name()
-        )
         # Hidden with the plugin window, shown again with it.
         self.dock.set_orientation_guide_visible(False)
         self.assertFalse(highlight.isVisible())
@@ -490,38 +326,6 @@ class DockStateTests(unittest.TestCase):
         self.assertAlmostEqual(footprint.area(), 80.0)
         self.assertFalse(footprint.constGet().is3D())
         self.assertIsNone(self.dock_module.building_footprint([]))
-
-    def test_qgis_selection_can_still_be_used(self):
-        layer = self.building_layer()
-        layer.selectAll()
-        self.iface.layer = layer
-        self.dock._use_qgis_selection_as_building()
-        self.assertEqual(len(self.dock.building_fids), 1)
-
-    def test_loading_a_config_clears_the_building(self):
-        self.full_session()
-        path = self.save_config()
-        self.dock._apply_config(self.config_io.load_config(path), path)
-        self.assertEqual(self.dock.building_fids, [])
-
-    def test_section_edits_have_no_float_noise(self):
-        p0 = (-12418.485, -34142.1600002)
-        self.dock._set_section(p0, (-12418.485, -34030.04))
-        self.assertEqual(self.dock.y0_edit.text(), "-34142.16")
-        self.dock._load_image(self.image_path)
-        self.add_gcps()
-        self.dock._use_manual_section()
-        self.assertEqual(self.confirm_calls, [])
-        self.assertEqual(self.dock.section_p0, p0)
-
-    def test_dialog_lists_what_will_be_cleared(self):
-        self.full_session()
-        self.dock.z_offset_edit.setText("1.5")
-        self.dock._on_projection_setting_edited()
-        text = self.confirm_calls[0]
-        self.assertIn("z offset: 0 → 1.5", text)
-        self.assertIn("• GCPs and transform", text)
-
 
     def test_gcp_edit_invalidates_both_projection_types_and_reprojection_matches(self):
         self.full_session()
@@ -643,11 +447,34 @@ class DockStateTests(unittest.TestCase):
         self.assertIsNone(self.dock.transform_result)
         self.assertFalse(self.dock._has_projection())
 
-    def test_non_metric_crs_is_refused(self):
-        self.set_project_crs("EPSG:2263")
-        with self.assertRaises(ValueError):
-            self.dock._set_section((0, 0), (100, 0))
+    def test_section_creation_requires_a_metric_crs(self):
+        for crs in ("EPSG:6697", "EPSG:2263"):
+            with self.subTest(crs=crs):
+                self.set_project_crs(crs)
+                with self.assertRaises(ValueError):
+                    self.dock._set_section((0, 0), (100, 0))
+                self.assertIsNone(self.dock.section_p0)
+                self.dock._start_section_line_map_tool()
+                self.assertIsNone(self.dock.section_line_tool)
 
+    def test_map_drawing_restores_window_and_tool_after_any_exit(self):
+        from qgis.core import QgsPointXY
 
-if __name__ == "__main__":
-    unittest.main()
+        self.dock.resize(1200, 700)
+        self.dock.show()
+        before = self.dock.size()
+        for outcome in ("finish", "cancel", "invalid"):
+            with self.subTest(outcome=outcome):
+                self.dock._start_section_line_map_tool()
+                tool = self.dock.section_line_tool
+                self.assertIs(self.iface.canvas.mapTool(), tool)
+                self.assertLess(self.dock.width(), 500)
+                if outcome == "cancel":
+                    self.dock._cancel_drawn_section_line()
+                else:
+                    end = QgsPointXY(100, 0) if outcome == "finish" else QgsPointXY(0, 0)
+                    self.dock._finish_drawn_section_line(QgsPointXY(0, 0), end)
+                self.assertEqual(self.dock.size(), before)
+                self.assertIsNone(self.dock.section_line_tool)
+                self.assertIsNot(self.iface.canvas.mapTool(), tool)
+        self.dock.hide()

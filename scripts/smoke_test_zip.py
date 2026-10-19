@@ -6,12 +6,13 @@ an installed plugin or the user's profile. It is not an interactive GUI test.
 import configparser
 import csv
 import importlib
-import json
 import os
 from pathlib import Path
 import sys
 import tempfile
 import zipfile
+
+from build_plugin import build
 
 ROOT = Path(__file__).resolve().parents[1]
 meta = configparser.ConfigParser()
@@ -21,6 +22,7 @@ archive = ROOT / 'dist' / ('section_georeferencer-' + version + '.zip')
 
 with tempfile.TemporaryDirectory(prefix='section-zip-smoke-') as temp:
     temp = Path(temp)
+    assert build(temp / 'rebuild').read_bytes() == archive.read_bytes(), 'ZIP build is not reproducible'
     profile = temp / 'profile'
     profile.mkdir()
     os.environ['QGIS_CUSTOM_CONFIG_PATH'] = str(profile)
@@ -31,7 +33,11 @@ with tempfile.TemporaryDirectory(prefix='section-zip-smoke-') as temp:
         assert source.testzip() is None
         for name in source.namelist():
             assert name.startswith('section_georeferencer/') and '..' not in Path(name).parts
-            assert not any(part.startswith('.') for part in Path(name).parts)
+            parts = Path(name).parts
+            assert not any(part.startswith('.') for part in parts)
+            assert not {'__pycache__', 'tests', 'scripts'}.intersection(parts)
+            assert not name.endswith('~')
+            assert source.read(name) == ROOT.joinpath(*parts[1:]).read_bytes(), name
         source.extractall(plugins)
     installed = plugins / 'section_georeferencer'
     assert (installed / 'LICENSE').exists()
@@ -71,6 +77,9 @@ with tempfile.TemporaryDirectory(prefix='section-zip-smoke-') as temp:
     plugin.toggle_dock(True)
     app.processEvents()
     dock = plugin.dock
+    runtime = importlib.import_module('section_georeferencer.section_georeferencer_dock')
+    assert runtime.PLUGIN_VERSION == version
+    assert '## ' + version + ' (' in (installed / 'CHANGELOG.md').read_text()
     demo = installed / 'examples' / 'synthetic'
     project = QgsProject.instance()
     assert project.read(str(demo / 'demo.qgs'))
@@ -78,7 +87,9 @@ with tempfile.TemporaryDirectory(prefix='section-zip-smoke-') as temp:
     assert all(layer.isValid() for layer in layers.values())
     assert len(layers) == 2
     io = importlib.import_module('section_georeferencer.config_io')
-    assert dock._apply_config(io.load_config(str(demo / 'section_config.json')), str(demo / 'section_config.json'))
+    sample = io.load_config(str(demo / 'section_config.json'))
+    assert sample['version'] == version
+    assert dock._apply_config(sample, str(demo / 'section_config.json'))
     building, gps = layers['synthetic_building'], layers['synthetic_gps']
     dock._set_building(building, [f.id() for f in building.getFeatures()])
     iface.layer = building

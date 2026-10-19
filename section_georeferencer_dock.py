@@ -787,6 +787,8 @@ class SectionGeoreferencerDock(QDockWidget):
             canvas = self.iface.mapCanvas()
             if self.previous_map_tool is not None:
                 canvas.setMapTool(self.previous_map_tool)
+            else:
+                canvas.unsetMapTool(self.section_line_tool)
         except Exception:
             pass
         self.section_line_tool = None
